@@ -96,18 +96,30 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Frontend origins allowed to call the API (override with CORS_ORIGINS=a,b,c).
+# Frontend origins (override with CORS_ORIGINS=a,b,c or CORS_ORIGINS=*).
+# Also allow localhost / private LAN via regex so phone/PC network URLs work.
 _default_origins = "http://localhost:3000,http://127.0.0.1:3000"
-_allow_origins = [
-    o.strip()
-    for o in os.getenv("CORS_ORIGINS", _default_origins).split(",")
-    if o.strip()
-]
+_cors_raw = os.getenv("CORS_ORIGINS", _default_origins).strip()
+_allow_all = _cors_raw == "*"
+_allow_origins = (
+    ["*"]
+    if _allow_all
+    else [o.strip() for o in _cors_raw.split(",") if o.strip()]
+)
+_LAN_ORIGIN_RE = (
+    r"https?://("
+    r"localhost|127\.0\.0\.1|"
+    r"192\.168\.\d{1,3}\.\d{1,3}|"
+    r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+    r"172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}"
+    r")(:\d+)?"
+)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allow_origins,
-    allow_credentials=True,
+    allow_origin_regex=None if _allow_all else _LAN_ORIGIN_RE,
+    allow_credentials=not _allow_all,
     allow_methods=["*"],
     allow_headers=["*"],
 )
