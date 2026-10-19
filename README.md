@@ -30,12 +30,23 @@ Set `NEXT_PUBLIC_API_URL` to the backend URL (default `http://localhost:8000`).
 
 ## Railway
 
-Backend deploys from `backend/Dockerfile`. Required env vars:
+- Project: **MI-LAB**
+- Backend URL: https://backend-production-35920.up.railway.app
+- Dashboard: https://railway.com/project/1346917b-b043-4e28-8f67-4cf80f92ad72
+
+Required env vars (already set on service `backend`):
 
 - `ALPACA_API_KEY_ID`
 - `ALPACA_API_SECRET_KEY`
 - `CORS_ORIGINS` (comma-separated frontend origins)
 
 Optional: `ALERT_POLL_SEC` (default `60`).
+
+For local frontend against Railway:
+
+```bash
+# frontend/.env.local
+NEXT_PUBLIC_API_URL=https://backend-production-35920.up.railway.app
+```
 
 Alerts DB lives under `/app/data` (ephemeral on free Railway unless you attach a volume).
