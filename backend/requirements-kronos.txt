@@ -1,0 +1,10 @@
+# Optional Kronos forecast stack (PyTorch + Hugging Face).
+# From backend/:  .\venv\Scripts\pip.exe install -r requirements-kronos.txt
+#
+# Models download on first /api/forecast request (Kronos-mini + tokenizer).
+
+torch>=2.0.0
+einops==0.8.1
+huggingface_hub>=0.33.1
+safetensors>=0.6.2
+tqdm>=4.67.1

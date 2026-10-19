@@ -1,0 +1,29 @@
+# Python
+backend/venv/
+backend/data/
+!backend/data/scanner_universe_us.txt
+backend/vendor/kronos-src/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+# Hugging Face / torch caches (optional Kronos)
+backend/.cache/
+*.pt
+*.bin
+
+# Node
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Env / secrets
+.env
+.env.local
+*.pem
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
