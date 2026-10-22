@@ -1,9 +1,23 @@
 import type { NextConfig } from "next";
 
+// Hardcoded Railway fallback — .env may not be available when next.config is evaluated.
+const BACKEND = (
+  process.env.BACKEND_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  "https://backend-production-35920.up.railway.app"
+).replace(/\/$/, "");
+
 const nextConfig: NextConfig = {
-  /* config options here */
   cacheComponents: true,
   partialPrefetching: true,
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: `${BACKEND}/api/:path*`,
+      },
+    ];
+  },
   turbopack: {
     root: __dirname,
     rules: {

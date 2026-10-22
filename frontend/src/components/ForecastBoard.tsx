@@ -34,9 +34,11 @@ export default function ForecastBoard() {
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     const qs = new URLSearchParams({
       interval,
-      lookback: "800",
+      // Cap at Railway-safe lookback (backend also clamps via KRONOS_MAX_LOOKBACK).
+      lookback: "256",
       pred_len: predLen,
     });
     const path = withRefresh(
@@ -44,22 +46,45 @@ export default function ForecastBoard() {
       refreshKey,
     );
 
-    fetchJson<ForecastResponse>(path)
-      .then((json) => {
-        if (cancelled) return;
-        setData(json);
-        setError(null);
-        setFetchedFor(requestKey);
-      })
-      .catch((err: Error) => {
-        if (cancelled) return;
-        setError(err.message);
-        setData(null);
-        setFetchedFor(requestKey);
-      });
+    const load = (attempt: number) => {
+      fetchJson<ForecastResponse>(path)
+        .then((json) => {
+          if (cancelled) return;
+          if (
+            isForecastUnavailable(json) &&
+            (json.reason === "MODEL_LOADING" || json.reason === "MODEL_BUSY") &&
+            attempt < 6
+          ) {
+            setData(json);
+            setError(null);
+            retryTimer = setTimeout(() => load(attempt + 1), 5000);
+            return;
+          }
+          setData(json);
+          setError(null);
+          setFetchedFor(requestKey);
+        })
+        .catch((err: Error) => {
+          if (cancelled) return;
+          const msg = err.message || "";
+          const retryable =
+            /internal server error|failed to fetch|timeout|gateway/i.test(msg);
+          // At most 2 soft retries — hammering a stuck worker makes it worse.
+          if (retryable && attempt < 2) {
+            retryTimer = setTimeout(() => load(attempt + 1), 5000 * (attempt + 1));
+            return;
+          }
+          setError(msg);
+          setData(null);
+          setFetchedFor(requestKey);
+        });
+    };
+
+    load(0);
 
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [symbol, interval, predLen, refreshKey, requestKey]);
 

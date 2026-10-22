@@ -7,8 +7,10 @@ available=false so the Lab still runs without the heavy ML stack.
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
 from typing import Any
 
@@ -21,12 +23,16 @@ _CACHE_TTL_SEC = 300
 _MODEL_NAME = "NeoQuasar/Kronos-mini"
 _TOKENIZER_NAME = "NeoQuasar/Kronos-Tokenizer-2k"
 _MAX_CONTEXT = 2048  # Kronos-mini tokenizer context
+# Railway CPU / RAM: keep lookback modest so inference finishes before proxy timeout.
+_MAX_LOOKBACK = max(32, min(int(os.getenv("KRONOS_MAX_LOOKBACK", "256")), _MAX_CONTEXT))
+_INFERENCE_TIMEOUT_SEC = float(os.getenv("KRONOS_INFERENCE_TIMEOUT_SEC", "45"))
 
 _KRONOS_ROOT = Path(__file__).resolve().parent.parent / "vendor" / "kronos"
 
 _predictor_lock = threading.Lock()
 _predictor = None
 _predictor_error: str | None = None
+_predictor_loading = False
 
 # The vendored Kronos model keeps mutable per-module inference state (e.g. the
 # RotaryPositionalEmbedding cos/sin cache, keyed only by sequence length — see
@@ -36,6 +42,7 @@ _predictor_error: str | None = None
 # inside attention (e.g. "size of tensor a (403) must match tensor b (402) at
 # non-singleton dimension 2"). Serialize all inference through one lock.
 _inference_lock = threading.Lock()
+_infer_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kronos-infer")
 
 _INTERVAL_MINUTES = {
     "1m": 1,
@@ -74,6 +81,31 @@ def _ensure_kronos_on_path() -> None:
         sys.path.insert(0, root)
 
 
+def _load_predictor_locked() -> None:
+    """Load weights. Caller must hold `_predictor_lock`."""
+    global _predictor, _predictor_error, _predictor_loading
+    if _predictor is not None or _predictor_error is not None:
+        return
+
+    ok, err = kronos_available()
+    if not ok:
+        _predictor_error = err
+        return
+
+    _predictor_loading = True
+    try:
+        _ensure_kronos_on_path()
+        from model import Kronos, KronosPredictor, KronosTokenizer
+
+        tokenizer = KronosTokenizer.from_pretrained(_TOKENIZER_NAME)
+        model = Kronos.from_pretrained(_MODEL_NAME)
+        _predictor = KronosPredictor(model, tokenizer, max_context=_MAX_CONTEXT)
+    except Exception as exc:
+        _predictor_error = f"Nu s-a putut încărca Kronos-mini: {exc}"
+    finally:
+        _predictor_loading = False
+
+
 def _get_predictor():
     global _predictor, _predictor_error
     if _predictor is not None:
@@ -86,25 +118,68 @@ def _get_predictor():
             return _predictor
         if _predictor_error is not None:
             raise RuntimeError(_predictor_error)
-
-        ok, err = kronos_available()
-        if not ok:
-            _predictor_error = err
-            raise RuntimeError(err)
-
-        try:
-            _ensure_kronos_on_path()
-            from model import Kronos, KronosPredictor, KronosTokenizer
-
-            tokenizer = KronosTokenizer.from_pretrained(_TOKENIZER_NAME)
-            model = Kronos.from_pretrained(_MODEL_NAME)
-            _predictor = KronosPredictor(
-                model, tokenizer, max_context=_MAX_CONTEXT
-            )
+        _load_predictor_locked()
+        if _predictor is not None:
             return _predictor
-        except Exception as exc:
-            _predictor_error = f"Nu s-a putut încărca Kronos-mini: {exc}"
-            raise RuntimeError(_predictor_error) from exc
+        raise RuntimeError(_predictor_error or "Kronos-mini unavailable")
+
+
+def predictor_ready() -> bool:
+    return _predictor is not None
+
+
+def predictor_status() -> dict[str, Any]:
+    return {
+        "ready": _predictor is not None,
+        "loading": _predictor_loading,
+        "error": _predictor_error,
+    }
+
+
+def warmup_in_background() -> None:
+    """Start Kronos weight load off the request path (Railway cold start)."""
+    ok, _ = kronos_available()
+    if not ok:
+        return
+    if _predictor is not None or _predictor_error is not None or _predictor_loading:
+        return
+
+    def _run() -> None:
+        with _predictor_lock:
+            if _predictor is None and _predictor_error is None:
+                _load_predictor_locked()
+
+    threading.Thread(target=_run, name="kronos-warmup", daemon=True).start()
+
+
+def _model_loading_payload(display: str, yahoo_symbol: str, proxy_note: str | None) -> dict[str, Any]:
+    return {
+        "available": False,
+        "reason": "MODEL_LOADING",
+        "ticker": display,
+        "yahoo_symbol": yahoo_symbol,
+        "proxy_note": proxy_note,
+        "message": (
+            "Kronos-mini se încarcă pe server (primul start durează ~1–2 min). "
+            "Reîncearcă în câteva secunde."
+        ),
+        "model": _MODEL_NAME,
+    }
+
+
+def _busy_payload(display: str, yahoo_symbol: str, proxy_note: str | None) -> dict[str, Any]:
+    return {
+        "available": False,
+        "reason": "MODEL_BUSY",
+        "ticker": display,
+        "yahoo_symbol": yahoo_symbol,
+        "proxy_note": proxy_note,
+        "message": (
+            "Kronos rulează deja o predicție. Reîncearcă în câteva secunde — "
+            "nu bloca request-ul pe proxy timeout."
+        ),
+        "model": _MODEL_NAME,
+    }
 
 
 def _bar_unix(ts: pd.Timestamp) -> int:
@@ -151,7 +226,7 @@ def forecast(
             f"Unsupported interval '{interval}'. Use one of: {sorted(_INTERVAL_MINUTES)}"
         )
 
-    lookback = max(32, min(int(lookback), _MAX_CONTEXT))
+    lookback = max(32, min(int(lookback), _MAX_LOOKBACK))
     pred_len = max(1, min(int(pred_len), 128))
     minutes = _INTERVAL_MINUTES[interval]
 
@@ -178,6 +253,22 @@ def forecast(
         if isinstance(cached, dict) and cached.get("available") is True:
             return cached
 
+    # Never block the HTTP request on HF weight download — that exceeds Railway /
+    # Next proxy timeouts and surfaces as a bare "Internal Server Error".
+    if _predictor is None:
+        if _predictor_error is not None:
+            return {
+                "available": False,
+                "reason": "KRONOS_LOAD_FAILED",
+                "ticker": display,
+                "yahoo_symbol": yahoo_symbol,
+                "proxy_note": proxy_note,
+                "message": _predictor_error,
+                "model": _MODEL_NAME,
+            }
+        warmup_in_background()
+        return _model_loading_payload(display, yahoo_symbol, proxy_note)
+
     hist, source = market_data.fetch_history(
         display, yahoo_symbol, interval, lookback
     )
@@ -201,10 +292,17 @@ def forecast(
     last_ts = x_timestamp.iloc[-1]
     y_timestamp = pd.Series(_future_index(last_ts, pred_len, minutes))
 
+    # Non-blocking: if another forecast holds the lock, return immediately so
+    # Next/Railway proxies do not surface a bare "Internal Server Error".
+    if not _inference_lock.acquire(blocking=False):
+        return _busy_payload(display, yahoo_symbol, proxy_note)
+
+    lock_held = True
     try:
         predictor = _get_predictor()
-        with _inference_lock:
-            pred_df = predictor.predict(
+
+        def _run_predict():
+            return predictor.predict(
                 df=x_df,
                 x_timestamp=x_timestamp,
                 y_timestamp=y_timestamp,
@@ -214,6 +312,34 @@ def forecast(
                 sample_count=1,
                 verbose=False,
             )
+
+        fut = _infer_pool.submit(_run_predict)
+        try:
+            pred_df = fut.result(timeout=_INFERENCE_TIMEOUT_SEC)
+        except FuturesTimeout:
+            # Keep the lock until the late job finishes — Kronos is not re-entrant.
+            def _release_when_done(f: Any) -> None:
+                try:
+                    f.result()
+                except Exception:
+                    pass
+                finally:
+                    _inference_lock.release()
+
+            fut.add_done_callback(_release_when_done)
+            lock_held = False
+            return {
+                "available": False,
+                "reason": "KRONOS_TIMEOUT",
+                "ticker": display,
+                "yahoo_symbol": yahoo_symbol,
+                "proxy_note": proxy_note,
+                "message": (
+                    f"Predicția a depășit {_INFERENCE_TIMEOUT_SEC:.0f}s pe server. "
+                    "Încearcă Bars=12 sau TF=15m."
+                ),
+                "model": _MODEL_NAME,
+            }
     except Exception as exc:
         return {
             "available": False,
@@ -224,6 +350,9 @@ def forecast(
             "message": str(exc),
             "model": _MODEL_NAME,
         }
+    finally:
+        if lock_held:
+            _inference_lock.release()
 
     # Align column names for candle serialization.
     pred_out = pred_df.copy()

@@ -34,7 +34,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from modules import alerts_engine, cvd
+from modules import alerts_engine, cvd, kronos_forecast
 from routers import (
     absorption,
     alerts,
@@ -74,6 +74,9 @@ async def _alerts_poller() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Preload Kronos-mini off the request path so the first forecast does not
+    # exceed Railway / Next proxy timeouts (plain "Internal Server Error").
+    kronos_forecast.warmup_in_background()
     task = asyncio.create_task(_alerts_poller())
     try:
         yield

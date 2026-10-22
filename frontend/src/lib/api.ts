@@ -1,8 +1,15 @@
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
-  "http://localhost:8000";
+// Prefer same-origin `/api` (Next rewrite → Railway). Fallback: direct Railway URL.
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL ||
+  "https://backend-production-35920.up.railway.app"
+).replace(/\/$/, "");
 
 export function apiUrl(path: string): string {
+  // When calling from the browser, use same-origin proxy path to avoid CORS.
+  // Server components / SSR can use absolute BACKEND via rewrite destination.
+  if (typeof window !== "undefined") {
+    return path.startsWith("/") ? path : `/${path}`;
+  }
   return `${API_URL}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
@@ -281,7 +288,14 @@ export type ForecastCandle = {
 
 export type ForecastUnavailable = {
   available: false;
-  reason?: string;
+  reason?:
+    | "KRONOS_NOT_INSTALLED"
+    | "KRONOS_INFERENCE_FAILED"
+    | "KRONOS_LOAD_FAILED"
+    | "KRONOS_TIMEOUT"
+    | "MODEL_LOADING"
+    | "MODEL_BUSY"
+    | string;
   ticker: string;
   yahoo_symbol?: string;
   proxy_note?: string | null;
