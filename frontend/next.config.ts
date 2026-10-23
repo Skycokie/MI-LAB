@@ -10,6 +10,9 @@ const BACKEND = (
 const nextConfig: NextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
+  experimental: {
+    agentUpgrade: "security",
+  },
   async rewrites() {
     return [
       {
