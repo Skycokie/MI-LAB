@@ -207,7 +207,7 @@ export default function WatchlistBoard() {
         setSearchOpen(false);
       }
     }
-    function onKey(e: KeyboardEvent) {
+    function onKey(e: globalThis.KeyboardEvent) {
       if (e.key === "Escape") setSearchOpen(false);
     }
     document.addEventListener("mousedown", onDocMouseDown);
