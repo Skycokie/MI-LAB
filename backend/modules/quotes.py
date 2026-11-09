@@ -10,7 +10,7 @@ from typing import Any
 import yfinance as yf
 
 from modules import disk_cache
-from modules.volume_profile import resolve_symbol
+from modules.volume_profile import is_fx_pair, resolve_symbol
 
 _CACHE_TTL_SEC = 60
 
@@ -44,12 +44,20 @@ def _one_quote(display: str) -> dict[str, Any]:
     except Exception:
         name = None
 
+    if is_fx_pair(display):
+        # FX: 5 decimals (3 for JPY-scale prices) so pips are visible.
+        px_dp = 3 if last >= 20 else 5
+        chg_dp = px_dp
+    else:
+        px_dp = 4 if last < 50 else 2
+        chg_dp = 4 if abs(change) < 1 else 2
+
     base = {
         "yahoo_symbol": yahoo,
         "name": name,
-        "price": round(last, 4 if last < 50 else 2),
-        "prev_close": round(prev, 4 if prev < 50 else 2),
-        "change": round(change, 4 if abs(change) < 1 else 2),
+        "price": round(last, px_dp),
+        "prev_close": round(prev, px_dp),
+        "change": round(change, chg_dp),
         "change_pct": round(change_pct, 2),
         "currency": None,
         "as_of": str(closes.index[-1].date()),

@@ -11,15 +11,19 @@ import {
 
 export type LabTab =
   | "watch"
+  | "crypto"
+  | "indices"
+  | "forex"
   | "signals"
   | "scanner"
   | "alerts"
+  | "news"
   | "gex"
   | "cot"
   | "vp"
   | "fp"
   | "forecast";
-export type OpenTarget = "gex" | "vp" | "fp" | "forecast";
+export type OpenTarget = "gex" | "vp" | "fp" | "forecast" | "news";
 
 type LabContextValue = {
   activeSymbol: string;

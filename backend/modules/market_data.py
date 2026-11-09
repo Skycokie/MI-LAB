@@ -20,65 +20,43 @@ import pandas as pd
 import requests
 import yfinance as yf
 
+from modules.volume_profile import is_fx_pair
+
 logger = logging.getLogger(__name__)
 
 _HTTP_TIMEOUT = 10
 
-# Display aliases → HTX spot symbols (lowercase, quote USDT).
-_HTX_ALIASES: dict[str, str] = {
+# Base crypto tickers → HTX USDT spot pair.
+_HTX_BASES: dict[str, str] = {
     "BTC": "btcusdt",
-    "BTCUSD": "btcusdt",
-    "BTCUSDT": "btcusdt",
-    "BTC-USD": "btcusdt",
     "XBT": "btcusdt",
     "ETH": "ethusdt",
-    "ETHUSD": "ethusdt",
-    "ETHUSDT": "ethusdt",
-    "ETH-USD": "ethusdt",
     "SOL": "solusdt",
-    "SOLUSD": "solusdt",
-    "SOLUSDT": "solusdt",
-    "SOL-USD": "solusdt",
     "XRP": "xrpusdt",
-    "XRPUSD": "xrpusdt",
-    "XRPUSDT": "xrpusdt",
-    "XRP-USD": "xrpusdt",
     "DOGE": "dogeusdt",
-    "DOGEUSD": "dogeusdt",
-    "DOGEUSDT": "dogeusdt",
-    "DOGE-USD": "dogeusdt",
     "ADA": "adausdt",
-    "ADAUSD": "adausdt",
-    "ADAUSDT": "adausdt",
-    "ADA-USD": "adausdt",
     "BNB": "bnbusdt",
-    "BNBUSDT": "bnbusdt",
-    "BNB-USD": "bnbusdt",
     "AVAX": "avaxusdt",
-    "AVAXUSDT": "avaxusdt",
-    "AVAX-USD": "avaxusdt",
     "LINK": "linkusdt",
-    "LINKUSDT": "linkusdt",
-    "LINK-USD": "linkusdt",
     "DOT": "dotusdt",
-    "DOTUSDT": "dotusdt",
-    "DOT-USD": "dotusdt",
     "LTC": "ltcusdt",
-    "LTCUSDT": "ltcusdt",
-    "LTC-USD": "ltcusdt",
     "BCH": "bchusdt",
-    "BCHUSDT": "bchusdt",
-    "BCH-USD": "bchusdt",
     "TRX": "trxusdt",
-    "TRXUSDT": "trxusdt",
-    "TRX-USD": "trxusdt",
     "TON": "tonusdt",
-    "TONUSDT": "tonusdt",
     "SUI": "suiusdt",
-    "SUIUSDT": "suiusdt",
     "PEPE": "pepeusdt",
-    "PEPEUSDT": "pepeusdt",
 }
+
+# Display aliases → HTX spot symbols (lowercase, quote USDT).
+# Includes Yahoo (BTC-USD), pairs (BTCUSDT), and broker CFDs (BTC.US).
+_HTX_ALIASES: dict[str, str] = {}
+for _base, _htx in _HTX_BASES.items():
+    _HTX_ALIASES[_base] = _htx
+    _HTX_ALIASES[f"{_base}USD"] = _htx
+    _HTX_ALIASES[f"{_base}USDT"] = _htx
+    _HTX_ALIASES[f"{_base}-USD"] = _htx
+    _HTX_ALIASES[f"{_base}.US"] = _htx  # Trading212 / CFD-style crypto
+    _HTX_ALIASES[f"{_base}.USD"] = _htx
 
 # Forex / index aliases that must not go to Alpaca or HTX.
 _FOREX_ALIASES: set[str] = {
@@ -102,6 +80,46 @@ _FOREX_ALIASES: set[str] = {
     "USDCHF=X",
     "SPX",
     "SP500",
+    # Index / commodity CFDs — Yahoo proxies, not Alpaca equities
+    "USA500",
+    "US500",
+    "SPX500",
+    "US100",
+    "NAS100",
+    "USTECH",
+    "US30",
+    "DJ30",
+    "WALLSTREET",
+    "GER40",
+    "DE40",
+    "DAX40",
+    "DAX",
+    "UK100",
+    "FTSE100",
+    "FRA40",
+    "CAC40",
+    "JPN225",
+    "JP225",
+    "NI225",
+    "EU50",
+    "EUSTX50",
+    "AUS200",
+    "AU200",
+    "HK50",
+    "HKCHINA50",
+    "SPA35",
+    "IBEX35",
+    "SWI20",
+    "SMI20",
+    "ITA40",
+    "GOLD",
+    "XAUUSD",
+    "OIL",
+    "USOIL",
+    "BRENT",
+    "VIX",
+    "US10Y",
+    "TNX",
 }
 
 _ALPACA_TIMEFRAME: dict[str, str] = {
@@ -148,7 +166,7 @@ def htx_configured() -> bool:
 
 
 def is_forex_symbol(display: str) -> bool:
-    return display.upper().strip() in _FOREX_ALIASES
+    return display.upper().strip() in _FOREX_ALIASES or is_fx_pair(display)
 
 
 def is_crypto_symbol(display: str) -> bool:
@@ -162,9 +180,14 @@ def _resolve_htx_symbol(display: str) -> str | None:
         return None
     if raw in _HTX_ALIASES:
         return _HTX_ALIASES[raw]
+    # Broker CFD with venue suffix: BTC.US → BTC
+    if "." in raw:
+        base, _suffix = raw.rsplit(".", 1)
+        if base in _HTX_BASES:
+            return _HTX_BASES[base]
     # Already an HTX-style pair: BTCUSDT, ethusdt, BTC/USDT
-    compact = raw.replace("/", "").replace("-", "").replace("_", "")
-    if compact.endswith(("USDT", "USDC", "BTC", "ETH")) and len(compact) >= 6:
+    compact = raw.replace("/", "").replace("-", "").replace("_", "").replace(".", "")
+    if compact.endswith(("USDT", "USDC")) and len(compact) >= 6:
         return compact.lower()
     return None
 
@@ -274,7 +297,7 @@ def _fetch_alpaca(display: str, interval: str, lookback: int) -> pd.DataFrame | 
     # Skip CFD / forex / crypto — Alpaca is US equities.
     if "." in symbol or "=" in symbol or "/" in symbol:
         return None
-    if symbol in _FOREX_ALIASES or _resolve_htx_symbol(symbol):
+    if symbol in _FOREX_ALIASES or is_fx_pair(symbol) or _resolve_htx_symbol(symbol):
         return None
 
     start = _lookback_start(interval, lookback).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -387,6 +410,7 @@ def fetch_history(
     if (
         alpaca_configured()
         and display not in _FOREX_ALIASES
+        and not is_fx_pair(display)
         and not _resolve_htx_symbol(display)
         and interval in _ALPACA_TIMEFRAME
     ):

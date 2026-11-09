@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { BarChart3, Grid3x3, Layers } from "lucide-react";
 import {
-  postJson,
+  scanSignalsChunked,
   type WatchlistSignalsResponse,
   type WatchSignal,
 } from "@/lib/api";
@@ -58,17 +58,23 @@ export default function SignalsBoard() {
       };
     }
 
-    postJson<WatchlistSignalsResponse>("/api/watchlist/signals", {
+    const apply = (res: WatchlistSignalsResponse) => {
+      setSignals(res.signals);
+      setErrors(res.errors);
+      setMeta({ scanned: res.scanned, interval: res.interval });
+    };
+
+    scanSignalsChunked(
       symbols,
-      interval: "15m",
-      limit_per: 5,
-      refresh: refreshKey > 0,
-    })
+      { interval: "15m", limit_per: 5, refresh: refreshKey > 0 },
+      (partial) => {
+        if (cancelled) return;
+        apply(partial);
+      },
+    )
       .then((res) => {
         if (cancelled) return;
-        setSignals(res.signals);
-        setErrors(res.errors);
-        setMeta({ scanned: res.scanned, interval: res.interval });
+        apply(res);
         setError(null);
         setFetchedFor(requestKey);
       })

@@ -240,6 +240,7 @@ export default function AlertsBoard() {
                 <OpenBtn label="VP" target="vp" symbol={a.symbol} />
                 <OpenBtn label="FP" target="fp" symbol={a.symbol} />
                 <OpenBtn label="FC" target="forecast" symbol={a.symbol} />
+                <OpenBtn label="News" target="news" symbol={a.symbol} />
               </div>
             </div>
             <div className="mt-1.5 flex gap-2 text-[10px] text-zinc-600">

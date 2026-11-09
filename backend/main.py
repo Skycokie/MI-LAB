@@ -16,6 +16,7 @@ Routers:
     /api/scanner/momentum        US momentum scan (Yahoo delayed)
     /api/forecast/{ticker}       Kronos-mini OHLCV forecast (optional)
     /api/alerts                  Watchlist alerts + Alpaca Paper risk
+    /api/news/{ticker}           Headlines (Financial Datasets, Alpaca fallback)
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from routers import (
     forecast,
     footprint,
     gex,
+    news,
     scanner,
     volume_profile,
     watchlist,
@@ -136,6 +138,7 @@ app.include_router(watchlist.router)
 app.include_router(scanner.router)
 app.include_router(forecast.router)
 app.include_router(alerts.router)
+app.include_router(news.router)
 
 
 @app.get("/")
@@ -157,6 +160,8 @@ def root():
             "/api/alerts",
             "/api/alerts/risk",
             "/api/alerts/run",
+            "/api/news/{ticker}",
+            "/api/news/status",
         ],
     }
 

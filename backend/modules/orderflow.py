@@ -21,7 +21,12 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from modules.volume_profile import resolve_symbol
+from modules.volume_profile import (
+    ensure_positive_volume,
+    fetch_intraday,
+    fx_pair,
+    fx_pip,
+)
 
 INTERVAL_MINUTES: dict[str, int] = {
     "1m": 1,
@@ -64,20 +69,14 @@ def _ask_share(open_: float, high: float, low: float, close: float) -> float:
 
 def fetch_1m_bars(symbol: str, period: str = "7d") -> tuple[pd.DataFrame, str, str | None]:
     """Download 1-minute bars; drop zero-volume rows."""
-    yahoo_symbol, proxy_note = resolve_symbol(symbol)
-    tk = yf.Ticker(yahoo_symbol)
-    df = tk.history(period=period, interval="1m", auto_adjust=True)
-    if df is None or df.empty:
-        raise ValueError(f"No 1m data for '{yahoo_symbol}'.")
+    df, yahoo_symbol, proxy_note = fetch_intraday(symbol, "1m", period)
     if "Volume" not in df.columns:
         raise ValueError(f"No Volume column for '{yahoo_symbol}'.")
 
-    working = df[df["Volume"] > 0].copy()
-    if working.empty:
-        raise ValueError(
-            f"All 1m bars have zero volume for '{yahoo_symbol}'. "
-            "Try a CME futures proxy (e.g. ES=F, 6E=F)."
-        )
+    working, synthetic_vol = ensure_positive_volume(df)
+    if synthetic_vol:
+        note = f"Synthetic range-volume (Yahoo Volume=0 for {yahoo_symbol})"
+        proxy_note = f"{proxy_note}; {note}" if proxy_note else note
     working = working.rename(
         columns={
             "Open": "open",
@@ -225,8 +224,13 @@ def build_orderflow(
     bars, yahoo_symbol, proxy_note = fetch_1m_bars(symbol, period=period)
 
     if tick_size is None:
-        span = float(bars["high"].max() - bars["low"].min())
-        tick_size = nice_tick_size(span, target_levels=80)
+        pair = fx_pair(symbol)
+        if pair:
+            # One pip per row keeps FX footprint cells readable.
+            tick_size = fx_pip(pair)
+        else:
+            span = float(bars["high"].max() - bars["low"].min())
+            tick_size = nice_tick_size(span, target_levels=80)
 
     level_rows = estimate_level_volumes(bars, tick_size=tick_size)
     candles_df = aggregate_candles(level_rows, interval=interval)

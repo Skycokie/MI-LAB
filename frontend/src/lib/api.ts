@@ -372,6 +372,79 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * Absorption scan in small batches. One request for a whole watchlist can
+ * exceed the proxy timeout (~30s), which surfaces as a bare "Internal Server
+ * Error". Batches run in parallel and are merged; `onPartial` fires as each
+ * batch lands so the UI fills progressively.
+ */
+export async function scanSignalsChunked(
+  symbols: string[],
+  opts: { interval: string; limit_per: number; refresh: boolean },
+  onPartial?: (merged: WatchlistSignalsResponse) => void,
+  batchSize = 6,
+): Promise<WatchlistSignalsResponse> {
+  const batches: string[][] = [];
+  for (let i = 0; i < symbols.length; i += batchSize) {
+    batches.push(symbols.slice(i, i + batchSize));
+  }
+
+  const merged: WatchlistSignalsResponse = {
+    interval: opts.interval,
+    window: 20,
+    volume_mult: 1.8,
+    estimated: true,
+    scanned: 0,
+    per_symbol: [],
+    signals: [],
+    errors: [],
+  };
+  const order = new Map(symbols.map((s, i) => [s.toUpperCase(), i]));
+
+  const absorb = (res: WatchlistSignalsResponse) => {
+    merged.window = res.window;
+    merged.volume_mult = res.volume_mult;
+    merged.scanned += res.scanned;
+    merged.per_symbol.push(...res.per_symbol);
+    merged.signals.push(...res.signals);
+    merged.errors.push(...res.errors);
+    merged.per_symbol.sort(
+      (a, b) => (order.get(a.symbol) ?? 999) - (order.get(b.symbol) ?? 999),
+    );
+    merged.signals.sort((a, b) => (b.time ?? 0) - (a.time ?? 0));
+    onPartial?.({ ...merged });
+  };
+
+  // Two batches in flight at a time: keeps Yahoo happy, still much faster.
+  let next = 0;
+  const worker = async () => {
+    while (next < batches.length) {
+      const batch = batches[next++];
+      try {
+        absorb(
+          await postJson<WatchlistSignalsResponse>("/api/watchlist/signals", {
+            symbols: batch,
+            interval: opts.interval,
+            limit_per: opts.limit_per,
+            refresh: opts.refresh,
+          }),
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "scan failed";
+        absorb({
+          ...merged,
+          scanned: 0,
+          per_symbol: [],
+          signals: [],
+          errors: batch.map((symbol) => ({ symbol, error: msg })),
+        });
+      }
+    }
+  };
+  await Promise.all([worker(), worker()]);
+  return merged;
+}
+
 export async function putJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(apiUrl(path), {
     method: "PUT",
@@ -391,6 +464,32 @@ export async function putJson<T>(path: string, body: unknown): Promise<T> {
   }
   return res.json() as Promise<T>;
 }
+
+export type NewsItem = {
+  title: string;
+  summary: string | null;
+  source: string | null;
+  author: string | null;
+  published_at: string | null;
+  url: string | null;
+  tickers: string[];
+  sentiment: string | null;
+  provider: "financial-datasets" | "alpaca" | string;
+};
+
+export type NewsResponse = {
+  available: boolean;
+  ticker: string;
+  symbol: string;
+  message?: string;
+  proxy_note?: string | null;
+  provider?: string | null;
+  count?: number;
+  items: NewsItem[];
+  errors?: string[];
+  providers?: { financial_datasets: boolean; alpaca: boolean };
+  as_of?: string;
+};
 
 export type AlertSeverity = "info" | "warn" | "critical";
 

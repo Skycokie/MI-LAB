@@ -12,7 +12,9 @@ import {
   BarChart3,
   Grid3x3,
   Layers,
+  Newspaper,
   Plus,
+  Sparkles,
   RotateCcw,
   Search,
   Trash2,
@@ -21,6 +23,7 @@ import {
   fetchJson,
   postJson,
   putJson,
+  scanSignalsChunked,
   type QuotesResponse,
   type QuoteRow,
   type SearchResponse,
@@ -28,17 +31,99 @@ import {
   type WatchlistSignalsResponse,
 } from "@/lib/api";
 import {
+  addToCryptoWatchlist,
+  addToForexWatchlist,
+  addToIndicesWatchlist,
   addToWatchlist,
   DEFAULT_CFD_WATCHLIST,
+  DEFAULT_CRYPTO_WATCHLIST,
+  DEFAULT_FOREX_WATCHLIST,
+  DEFAULT_INDICES_WATCHLIST,
+  loadCryptoWatchlist,
+  loadForexWatchlist,
+  loadIndicesWatchlist,
   loadWatchlist,
+  removeFromCryptoWatchlist,
+  removeFromForexWatchlist,
+  removeFromIndicesWatchlist,
   removeFromWatchlist,
+  resetCryptoWatchlist,
+  resetForexWatchlist,
+  resetIndicesWatchlist,
   resetWatchlist,
   watchlistSymbols,
   type WatchItem,
 } from "@/lib/watchlist";
+import { getTradingProgram } from "@/lib/tradingPrograms";
+import { fmtPriceFor } from "@/lib/format";
 import { useLab, type OpenTarget } from "@/context/LabContext";
 
 export type { OpenTarget };
+
+export type WatchlistVariant = "cfd" | "crypto" | "indices" | "forex";
+
+const VARIANT = {
+  cfd: {
+    title: "CFD Watchlist",
+    subtitle: (n: number) =>
+      `Saved in this browser · ${n} symbols · program + price + Δ + absorption`,
+    placeholder: "Search e.g. siemens, NVDA…",
+    resetTitle: "Restore default CFD list",
+    defaults: DEFAULT_CFD_WATCHLIST,
+    load: loadWatchlist,
+    add: addToWatchlist,
+    remove: removeFromWatchlist,
+    reset: resetWatchlist,
+    syncAlerts: true,
+    showGex: true,
+    showForecast: false,
+  },
+  crypto: {
+    title: "Crypto Watchlist",
+    subtitle: (n: number) =>
+      `Crypto CFDs (BTC.US) · HTX + Yahoo · ${n} pairs · price + day Δ`,
+    placeholder: "Search e.g. BTC.US, ETH, PEPE…",
+    resetTitle: "Restore default crypto list",
+    defaults: DEFAULT_CRYPTO_WATCHLIST,
+    load: loadCryptoWatchlist,
+    add: addToCryptoWatchlist,
+    remove: removeFromCryptoWatchlist,
+    reset: resetCryptoWatchlist,
+    syncAlerts: false,
+    showGex: false,
+    showForecast: true,
+  },
+  indices: {
+    title: "Indices CFD",
+    subtitle: (n: number) =>
+      `Index CFDs · USA500 US100 GER40 · Yahoo futures · ${n} symbols`,
+    placeholder: "Search e.g. USA500, GER40, GOLD…",
+    resetTitle: "Restore default indices list",
+    defaults: DEFAULT_INDICES_WATCHLIST,
+    load: loadIndicesWatchlist,
+    add: addToIndicesWatchlist,
+    remove: removeFromIndicesWatchlist,
+    reset: resetIndicesWatchlist,
+    syncAlerts: false,
+    showGex: false,
+    showForecast: true,
+  },
+  forex: {
+    title: "Forex Watchlist",
+    subtitle: (n: number) =>
+      `Forex pairs · spot price (Yahoo) · VP / FP volume from CME futures · ${n} pairs`,
+    placeholder: "Search e.g. EURUSD, GBPJPY, NZDUSD…",
+    resetTitle: "Restore default forex list",
+    defaults: DEFAULT_FOREX_WATCHLIST,
+    load: loadForexWatchlist,
+    add: addToForexWatchlist,
+    remove: removeFromForexWatchlist,
+    reset: resetForexWatchlist,
+    syncAlerts: false,
+    showGex: false,
+    showForecast: true,
+  },
+} as const;
 
 function syncAlertsWatchlist(items: WatchItem[]) {
   void putJson("/api/alerts/watchlist", {
@@ -53,14 +138,14 @@ function fmtPct(n: number): string {
   return `${sign}${n.toFixed(2)}%`;
 }
 
-function fmtPrice(n: number): string {
-  if (n >= 50) return n.toFixed(2);
-  return n.toFixed(4);
-}
-
-export default function WatchlistBoard() {
+export default function WatchlistBoard({
+  variant = "cfd",
+}: {
+  variant?: WatchlistVariant;
+}) {
+  const cfg = VARIANT[variant];
   const { refreshKey, openSymbol } = useLab();
-  const [items, setItems] = useState<WatchItem[]>(DEFAULT_CFD_WATCHLIST);
+  const [items, setItems] = useState<WatchItem[]>([...cfg.defaults]);
   const [addInput, setAddInput] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -90,14 +175,14 @@ export default function WatchlistBoard() {
     let cancelled = false;
     Promise.resolve().then(() => {
       if (cancelled) return;
-      const loaded = loadWatchlist();
+      const loaded = cfg.load();
       setItems(loaded);
-      syncAlertsWatchlist(loaded);
+      if (cfg.syncAlerts) syncAlertsWatchlist(loaded);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [cfg]);
 
   useEffect(() => {
     let cancelled = false;
@@ -147,18 +232,24 @@ export default function WatchlistBoard() {
       };
     }
 
-    postJson<WatchlistSignalsResponse>("/api/watchlist/signals", {
+    const apply = (res: WatchlistSignalsResponse) => {
+      const map: typeof latestBySymbol = {};
+      for (const row of res.per_symbol) map[row.symbol] = row;
+      setLatestBySymbol(map);
+      setScanErrors(res.errors);
+    };
+
+    scanSignalsChunked(
       symbols,
-      interval: "15m",
-      limit_per: 3,
-      refresh: refreshKey > 0,
-    })
+      { interval: "15m", limit_per: 3, refresh: refreshKey > 0 },
+      (partial) => {
+        if (cancelled) return;
+        apply(partial);
+      },
+    )
       .then((res) => {
         if (cancelled) return;
-        const map: typeof latestBySymbol = {};
-        for (const row of res.per_symbol) map[row.symbol] = row;
-        setLatestBySymbol(map);
-        setScanErrors(res.errors);
+        apply(res);
         setSignalsFor(signalsRequestKey);
       })
       .catch(() => {
@@ -226,9 +317,9 @@ export default function WatchlistBoard() {
   );
 
   function pickSymbol(symbol: string) {
-    const next = addToWatchlist(items, symbol);
+    const next = cfg.add(items, symbol);
     setItems(next);
-    syncAlertsWatchlist(next);
+    if (cfg.syncAlerts) syncAlertsWatchlist(next);
     setAddInput("");
     setSearchResults([]);
     setSearchOpen(false);
@@ -260,15 +351,15 @@ export default function WatchlistBoard() {
   }
 
   function onRemove(symbol: string) {
-    const next = removeFromWatchlist(items, symbol);
+    const next = cfg.remove(items, symbol);
     setItems(next);
-    syncAlertsWatchlist(next);
+    if (cfg.syncAlerts) syncAlertsWatchlist(next);
   }
 
   function onReset() {
-    const next = resetWatchlist();
+    const next = cfg.reset();
     setItems(next);
-    syncAlertsWatchlist(next);
+    if (cfg.syncAlerts) syncAlertsWatchlist(next);
   }
 
   const quoteMap = useMemo(() => {
@@ -281,13 +372,8 @@ export default function WatchlistBoard() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-zinc-100">
-            CFD Watchlist
-          </h2>
-          <p className="text-xs text-zinc-500">
-            Saved in this browser · {items.length} symbols · price + day Δ +
-            latest absorption
-          </p>
+          <h2 className="text-lg font-semibold text-zinc-100">{cfg.title}</h2>
+          <p className="text-xs text-zinc-500">{cfg.subtitle(items.length)}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <form onSubmit={onAdd} className="flex gap-2">
@@ -316,7 +402,7 @@ export default function WatchlistBoard() {
                     }
                   }}
                   onKeyDown={onSearchKeyDown}
-                  placeholder="Search e.g. siemens, NVDA…"
+                  placeholder={cfg.placeholder}
                   spellCheck={false}
                   autoComplete="off"
                   role="combobox"
@@ -400,7 +486,7 @@ export default function WatchlistBoard() {
             type="button"
             onClick={onReset}
             className="inline-flex items-center gap-1 rounded border border-zinc-800 px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300"
-            title="Restore default CFD list"
+            title={cfg.resetTitle}
           >
             <RotateCcw className="h-3.5 w-3.5" />
             Reset
@@ -419,6 +505,7 @@ export default function WatchlistBoard() {
           <thead className="border-b border-zinc-800 bg-zinc-950 text-[11px] uppercase tracking-wider text-zinc-500">
             <tr>
               <th className="px-3 py-2.5 font-medium">Symbol</th>
+              <th className="px-3 py-2.5 font-medium">Program</th>
               <th className="px-3 py-2.5 font-medium">Price</th>
               <th className="px-3 py-2.5 font-medium">Δ day</th>
               <th className="px-3 py-2.5 font-medium">Absorption</th>
@@ -432,6 +519,7 @@ export default function WatchlistBoard() {
               const scan = latestBySymbol[item.symbol];
               const latest = scan?.latest;
               const up = (q?.change_pct ?? 0) >= 0;
+              const program = getTradingProgram(item.symbol);
               return (
                 <tr
                   key={item.symbol}
@@ -442,15 +530,29 @@ export default function WatchlistBoard() {
                       {item.symbol}
                     </div>
                     <div className="text-[10px] text-zinc-600">
+                      {item.label
+                        ? `${item.label} · `
+                        : ""}
                       {q?.yahoo_symbol || "—"}
                       {q?.name ? ` · ${q.name}` : ""}
+                    </div>
+                  </td>
+                  <td className="max-w-[280px] px-3 py-2.5 align-top">
+                    <div className="text-[11px] font-medium text-zinc-200">
+                      {program.style}
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-amber-500/80">
+                      {program.session}
+                    </div>
+                    <div className="mt-1 text-[10px] leading-snug text-zinc-500">
+                      {program.plan}
                     </div>
                   </td>
                   <td className="px-3 py-2.5 font-mono text-zinc-200">
                     {loadingQuotes && !q ? (
                       <span className="text-zinc-600">…</span>
                     ) : q ? (
-                      fmtPrice(q.price)
+                      fmtPriceFor(q.price, item.symbol)
                     ) : (
                       <span className="text-zinc-600">n/a</span>
                     )}
@@ -479,11 +581,13 @@ export default function WatchlistBoard() {
                   </td>
                   <td className="px-3 py-2.5">
                     <div className="flex flex-wrap gap-1">
-                      <OpenBtn
-                        label="GEX"
-                        icon={BarChart3}
-                        onClick={() => openSymbol(item.symbol, "gex")}
-                      />
+                      {cfg.showGex && (
+                        <OpenBtn
+                          label="GEX"
+                          icon={BarChart3}
+                          onClick={() => openSymbol(item.symbol, "gex")}
+                        />
+                      )}
                       <OpenBtn
                         label="VP"
                         icon={Layers}
@@ -493,6 +597,18 @@ export default function WatchlistBoard() {
                         label="FP"
                         icon={Grid3x3}
                         onClick={() => openSymbol(item.symbol, "fp")}
+                      />
+                      {cfg.showForecast && (
+                        <OpenBtn
+                          label="FC"
+                          icon={Sparkles}
+                          onClick={() => openSymbol(item.symbol, "forecast")}
+                        />
+                      )}
+                      <OpenBtn
+                        label="News"
+                        icon={Newspaper}
+                        onClick={() => openSymbol(item.symbol, "news")}
                       />
                     </div>
                   </td>

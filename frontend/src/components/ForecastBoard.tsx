@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import { useLab } from "@/context/LabContext";
 import TimeframeToggle from "@/components/TimeframeToggle";
+import { priceDecimals, priceMinMove } from "@/lib/format";
 
 const INTERVALS = ["5m", "15m"] as const;
 const PRED_LENS = ["12", "24", "48"] as const;
@@ -253,8 +254,8 @@ function ForecastChart({
       wickDownColor: "#ef4444",
       priceFormat: {
         type: "price",
-        precision: last < 20 ? 4 : 2,
-        minMove: last < 20 ? 0.0001 : 0.01,
+        precision: priceDecimals(last, symbol),
+        minMove: priceMinMove(last, symbol),
       },
     });
 
@@ -277,8 +278,8 @@ function ForecastChart({
       wickDownColor: "#f97316",
       priceFormat: {
         type: "price",
-        precision: last < 20 ? 4 : 2,
-        minMove: last < 20 ? 0.0001 : 0.01,
+        precision: priceDecimals(last, symbol),
+        minMove: priceMinMove(last, symbol),
       },
     });
 

@@ -5,9 +5,13 @@ import {
   Activity,
   BarChart3,
   Bell,
+  Bitcoin,
   Bookmark,
+  CandlestickChart,
+  CircleDollarSign,
   Landmark,
   Layers,
+  Newspaper,
   RefreshCw,
   Grid3x3,
   Radar,
@@ -22,6 +26,7 @@ import WatchlistBoard from "@/components/WatchlistBoard";
 import SignalsBoard from "@/components/SignalsBoard";
 import ScannerBoard from "@/components/ScannerBoard";
 import AlertsBoard from "@/components/AlertsBoard";
+import NewsBoard from "@/components/NewsBoard";
 import ForecastBoard from "@/components/ForecastBoard";
 import { DEFAULT_CFD_WATCHLIST } from "@/lib/watchlist";
 import { LabProvider, useLab, type LabTab } from "@/context/LabContext";
@@ -33,6 +38,24 @@ const TABS: { id: LabTab; label: string; hint: string; icon: typeof Activity }[]
       label: "Watchlist",
       hint: "CFD daily tracking · price · Δ · absorption",
       icon: Bookmark,
+    },
+    {
+      id: "crypto",
+      label: "Crypto",
+      hint: "Crypto CFDs · BTC.US ETH.US · HTX bars · price · Δ",
+      icon: Bitcoin,
+    },
+    {
+      id: "indices",
+      label: "Indici",
+      hint: "Index CFDs · USA500 US100 GER40 · Yahoo futures",
+      icon: CandlestickChart,
+    },
+    {
+      id: "forex",
+      label: "Forex",
+      hint: "Forex pairs · EURUSD GBPUSD USDJPY · VP / FP / absorption · CME futures volume",
+      icon: CircleDollarSign,
     },
     {
       id: "signals",
@@ -51,6 +74,12 @@ const TABS: { id: LabTab; label: string; hint: string; icon: typeof Activity }[]
       label: "Alerte",
       hint: "Watchlist rules · breakout / RVOL / RSI · Alpaca risk",
       icon: Bell,
+    },
+    {
+      id: "news",
+      label: "Știri",
+      hint: "Headlines per ticker · Financial Datasets · fallback Alpaca",
+      icon: Newspaper,
     },
     {
       id: "gex",
@@ -103,6 +132,18 @@ const CFD_PRESETS = DEFAULT_CFD_WATCHLIST.map((i) => ({
   label: i.symbol,
   value: i.symbol,
 }));
+const FX_PRESETS = [
+  "EURUSD",
+  "GBPUSD",
+  "USDJPY",
+  "USDCHF",
+  "AUDUSD",
+  "NZDUSD",
+  "USDCAD",
+  "EURJPY",
+  "GBPJPY",
+  "EURGBP",
+].map((p) => ({ label: p, value: p }));
 const FLOW_PRESETS = [
   { label: "ES", value: "ES=F" },
   { label: "NQ", value: "NQ=F" },
@@ -141,7 +182,11 @@ function LabShell() {
   const [spinning, setSpinning] = useState(false);
 
   const showTickerBar =
-    tab === "gex" || tab === "vp" || tab === "fp" || tab === "forecast";
+    tab === "gex" ||
+    tab === "vp" ||
+    tab === "fp" ||
+    tab === "forecast" ||
+    tab === "news";
   const showFlowPresets = tab === "vp" || tab === "fp" || tab === "forecast";
   const inputValue = draft ?? (showTickerBar ? activeSymbol : "");
 
@@ -280,6 +325,19 @@ function LabShell() {
               {showFlowPresets && (
                 <>
                   <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-600">
+                    FX
+                  </span>
+                  {FX_PRESETS.map((p) => (
+                    <Preset
+                      key={p.value}
+                      active={activeSymbol === p.value}
+                      onClick={() => applyTicker(p.value)}
+                    >
+                      {p.label}
+                    </Preset>
+                  ))}
+                  <span className="mx-1 h-3 w-px bg-zinc-700" aria-hidden />
+                  <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-600">
                     Watch
                   </span>
                   {FLOW_PRESETS.map((p) => (
@@ -364,6 +422,24 @@ function LabShell() {
           </section>
         )}
 
+        {tab === "crypto" && (
+          <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-4 sm:p-5">
+            <WatchlistBoard variant="crypto" />
+          </section>
+        )}
+
+        {tab === "indices" && (
+          <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-4 sm:p-5">
+            <WatchlistBoard variant="indices" />
+          </section>
+        )}
+
+        {tab === "forex" && (
+          <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-4 sm:p-5">
+            <WatchlistBoard variant="forex" />
+          </section>
+        )}
+
         {tab === "signals" && (
           <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-4 sm:p-5">
             <SignalsBoard />
@@ -379,6 +455,12 @@ function LabShell() {
         {tab === "alerts" && (
           <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-4 sm:p-5">
             <AlertsBoard />
+          </section>
+        )}
+
+        {tab === "news" && (
+          <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-4 sm:p-5">
+            <NewsBoard />
           </section>
         )}
 

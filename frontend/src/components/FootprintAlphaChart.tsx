@@ -104,8 +104,13 @@ export default function FootprintAlphaChart({
     const allPrices = new Set<number>();
     for (const c of data.candles) {
       for (const l of c.levels) allPrices.add(l.price);
-      allPrices.add(c.high);
-      allPrices.add(c.low);
+      // Snap wick extremes onto the tick grid: raw highs/lows (e.g. FX
+      // 1.126849) would otherwise create extra off-grid rows.
+      const tick = data.tick_size;
+      const snap = (p: number, fn: (x: number) => number, eps: number) =>
+        Number((fn(p / tick + eps) * tick).toFixed(10));
+      allPrices.add(snap(c.high, Math.ceil, -1e-9));
+      allPrices.add(snap(c.low, Math.floor, 1e-9));
     }
     const prices = [...allPrices].sort((a, b) => b - a);
     const priceIndex = new Map(prices.map((p, i) => [p, i]));

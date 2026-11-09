@@ -49,6 +49,48 @@ SYMBOL_PROXY: dict[str, str] = {
     "NDX": "NQ=F",
     "^NDX": "NQ=F",
     "NASDAQ": "NQ=F",
+    # Index CFDs (Trading212 / broker labels) → Yahoo futures / cash indices
+    "USA500": "ES=F",
+    "US500": "ES=F",
+    "SPX500": "ES=F",
+    "US100": "NQ=F",
+    "NAS100": "NQ=F",
+    "USTECH": "NQ=F",
+    "US30": "YM=F",
+    "DJ30": "YM=F",
+    "WALLSTREET": "YM=F",
+    # EU/Asia cash indices: Yahoo Volume is often 0 → synthetic range-volume in VP/OF.
+    "GER40": "^GDAXI",
+    "DE40": "^GDAXI",
+    "DAX40": "^GDAXI",
+    "DAX": "^GDAXI",
+    "UK100": "^FTSE",
+    "FTSE100": "^FTSE",
+    "FRA40": "^FCHI",
+    "CAC40": "^FCHI",
+    "JPN225": "^N225",
+    "JP225": "^N225",
+    "NI225": "^N225",
+    "EU50": "^STOXX50E",
+    "EUSTX50": "^STOXX50E",
+    "AUS200": "^AXJO",
+    "AU200": "^AXJO",
+    "HK50": "^HSI",
+    "HKCHINA50": "^HSI",
+    "SPA35": "^IBEX",
+    "IBEX35": "^IBEX",
+    "SWI20": "^SSMI",
+    "SMI20": "^SSMI",
+    "ITA40": "FTSEMIB.MI",
+    "GOLD": "GC=F",
+    "XAUUSD": "GC=F",
+    "OIL": "CL=F",
+    "USOIL": "CL=F",
+    "BRENT": "BZ=F",
+    # Sentiment / macro indicators
+    "VIX": "^VIX",
+    "US10Y": "^TNX",
+    "TNX": "^TNX",
     # CFD-style tickers (Trading212 / broker suffixes) → Yahoo Finance
     "NVDA.US": "NVDA",
     "PTC.US": "PTC",
@@ -68,6 +110,23 @@ SYMBOL_PROXY: dict[str, str] = {
     "MOG.A": "MOG-A",
     "MOG.A.US": "MOG-A",
     "MOG-A": "MOG-A",
+    # Crypto CFDs (broker .US) → Yahoo crypto tickers
+    "BTC.US": "BTC-USD",
+    "ETH.US": "ETH-USD",
+    "SOL.US": "SOL-USD",
+    "XRP.US": "XRP-USD",
+    "DOGE.US": "DOGE-USD",
+    "ADA.US": "ADA-USD",
+    "BNB.US": "BNB-USD",
+    "AVAX.US": "AVAX-USD",
+    "LINK.US": "LINK-USD",
+    "DOT.US": "DOT-USD",
+    "LTC.US": "LTC-USD",
+    "BCH.US": "BCH-USD",
+    "TRX.US": "TRX-USD",
+    "TON.US": "TON-USD",
+    "SUI.US": "SUI-USD",
+    "PEPE.US": "PEPE-USD",
 }
 
 # Broker venue suffix → Yahoo Finance exchange suffix
@@ -81,13 +140,37 @@ _CFD_SUFFIX_MAP: dict[str, str] = {
 }
 
 
+_CRYPTO_CFD_BASES = {
+    "BTC",
+    "ETH",
+    "SOL",
+    "XRP",
+    "DOGE",
+    "ADA",
+    "BNB",
+    "AVAX",
+    "LINK",
+    "DOT",
+    "LTC",
+    "BCH",
+    "TRX",
+    "TON",
+    "SUI",
+    "PEPE",
+}
+
+
 def _map_cfd_suffix(raw: str) -> tuple[str, str | None]:
-    """Convert NVDA.US / DSY.FR style CFD labels to Yahoo symbols."""
+    """Convert NVDA.US / DSY.FR / BTC.US style CFD labels to Yahoo symbols."""
     if "." not in raw:
         return raw, None
     base, suffix = raw.rsplit(".", 1)
     if not base or suffix not in _CFD_SUFFIX_MAP:
         return raw, None
+    # Crypto CFDs quote on Yahoo as BASE-USD (not bare ticker).
+    if base in _CRYPTO_CFD_BASES and suffix in {"US", "USD"}:
+        yahoo = f"{base}-USD"
+        return yahoo, f"Crypto CFD {raw} → {yahoo}"
     mapped_suffix = _CFD_SUFFIX_MAP[suffix]
     yahoo = base if not mapped_suffix else f"{base}.{mapped_suffix}"
     if yahoo == raw:
@@ -95,8 +178,55 @@ def _map_cfd_suffix(raw: str) -> tuple[str, str | None]:
     return yahoo, f"CFD {raw} → {yahoo}"
 
 
+FX_CURRENCIES = frozenset(
+    {
+        "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "NZD", "CAD",
+        "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "MXN", "ZAR",
+        "TRY", "SGD", "HKD", "CNH", "CNY",
+    }
+)
+
+# Pairs with a liquid CME currency future (real volume) on Yahoo.
+# value = (future symbol, inverted?).  The future quotes USD per foreign
+# unit, so USDxxx pairs are the reciprocal (inverted) of the future.
+FX_FUTURES: dict[str, tuple[str, bool]] = {
+    "EURUSD": ("6E=F", False),
+    "GBPUSD": ("6B=F", False),
+    "AUDUSD": ("6A=F", False),
+    "NZDUSD": ("6N=F", False),
+    "USDJPY": ("6J=F", True),
+    "USDCAD": ("6C=F", True),
+    "USDCHF": ("6S=F", True),
+}
+
+FX_TZ = "Europe/Bucharest"  # midnight RO ~ 17:00 New York FX roll-over
+
+
+def fx_pair(symbol: str) -> str | None:
+    """Normalise EURUSD / EUR/USD / EURUSD=X → 'EURUSD', else None."""
+    raw = symbol.strip().upper()
+    for junk in ("=X", "/", "-", "_", " "):
+        raw = raw.replace(junk, "")
+    if len(raw) == 6 and raw[:3] in FX_CURRENCIES and raw[3:] in FX_CURRENCIES:
+        if raw[:3] != raw[3:]:
+            return raw
+    return None
+
+
+def is_fx_pair(symbol: str) -> bool:
+    return fx_pair(symbol) is not None
+
+
+def fx_pip(pair: str) -> float:
+    """Pip size: 0.01 for JPY-quoted pairs, else 0.0001."""
+    return 0.01 if pair.endswith("JPY") else 0.0001
+
+
 def resolve_symbol(symbol: str) -> tuple[str, str | None]:
     """Return (yahoo_symbol, proxy_note_or_None)."""
+    pair = fx_pair(symbol)
+    if pair:
+        return f"{pair}=X", None
     raw = symbol.strip().upper()
     candidates = [raw, symbol.strip()]
     for key in candidates:
@@ -106,6 +236,125 @@ def resolve_symbol(symbol: str) -> tuple[str, str | None]:
             return target, f"Mapped {upper} → {target}"
     yahoo, note = _map_cfd_suffix(raw)
     return yahoo, note
+
+
+def ensure_positive_volume(df: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    """
+    Drop zero-volume bars when real volume exists.
+
+    Cash indices (^GDAXI, ^FTSE, …) and some FX spots report Volume=0 on
+    Yahoo. In that case synthesize volume from true range so VP / orderflow
+    can still run on the correct price scale (not an ETF proxy).
+    """
+    if "Volume" not in df.columns:
+        raise ValueError("No Volume column in OHLCV frame.")
+
+    working = df[df["Volume"] > 0].copy()
+    if not working.empty:
+        return working, False
+
+    working = df.copy()
+    tr = (working["High"] - working["Low"]).abs()
+    positive = tr[tr > 0]
+    med = float(positive.median()) if len(positive) else 0.0
+    if not np.isfinite(med) or med <= 0:
+        med = 1e-4
+    tr = tr.mask(tr <= 0, med)
+    working["Volume"] = tr.astype(float) * 1_000_000.0
+    return working, True
+
+
+def _fx_from_futures(
+    pair: str, spot: str, interval: str, period: str
+) -> tuple[pd.DataFrame, str] | None:
+    """
+    Real-volume FX bars: CME currency future, inverted when needed and
+    rescaled to the spot price level (the futures carry a small basis).
+    """
+    fut, inverse = FX_FUTURES[pair]
+    f = yf.Ticker(fut).history(period=period, interval=interval, auto_adjust=True)
+    if f is None or f.empty or "Volume" not in f.columns or f["Volume"].sum() <= 0:
+        return None
+    f = f[["Open", "High", "Low", "Close", "Volume"]].copy()
+    f = f[(f[["Open", "High", "Low", "Close"]] > 0).all(axis=1)]
+    if f.empty:
+        return None
+
+    if inverse:
+        o, h, l, c = f["Open"], f["High"], f["Low"], f["Close"]
+        f["Open"], f["High"], f["Low"], f["Close"] = 1.0 / o, 1.0 / l, 1.0 / h, 1.0 / c
+
+    # Futures→spot basis barely moves intraday: cache it to save a download.
+    ratio_key = f"fx_ratio:{pair}"
+    cached_ratio = disk_cache.get(ratio_key)
+    ratio = (
+        float(cached_ratio["r"])
+        if isinstance(cached_ratio, dict) and "r" in cached_ratio
+        else None
+    )
+    if ratio is None:
+        s = yf.Ticker(spot).history(period=period, interval=interval, auto_adjust=True)
+        if s is not None and not s.empty:
+            common = f.index.intersection(s.index)
+            if len(common) >= 20:
+                ratio = float(
+                    (s["Close"].loc[common] / f["Close"].loc[common]).tail(300).median()
+                )
+            else:
+                ratio = float(s["Close"].iloc[-1] / f["Close"].iloc[-1])
+        if ratio is not None and np.isfinite(ratio) and 0.97 < ratio < 1.03:
+            disk_cache.set(ratio_key, {"r": ratio}, 600)
+    if ratio is None or not np.isfinite(ratio) or not 0.97 < ratio < 1.03:
+        return None
+    for col in ("Open", "High", "Low", "Close"):
+        f[col] = f[col] * ratio
+
+    note = (
+        f"{pair}: volume from CME {fut}"
+        f"{' (inverted)' if inverse else ''}, prices rescaled to spot (x{ratio:.5f})"
+    )
+    return f, note
+
+
+def _to_fx_tz(df: pd.DataFrame) -> pd.DataFrame:
+    """Express FX bars in Romanian local time so a 'session' ~ NY roll-over day."""
+    if isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
+        out = df.copy()
+        out.index = out.index.tz_convert(FX_TZ)
+        return out
+    return df
+
+
+def fetch_intraday(
+    symbol: str, interval: str, period: str
+) -> tuple[pd.DataFrame, str, str | None]:
+    """
+    Intraday OHLCV (Yahoo column names) for VP / order-flow.
+
+    FX pairs: real volume from the matching CME future when available
+    (prices converted to the spot scale); other pairs fall back to the
+    spot series, whose zero volume becomes synthetic range-volume.
+    Returns (df, yahoo_symbol, proxy_note).
+    """
+    yahoo_symbol, proxy_note = resolve_symbol(symbol)
+    pair = fx_pair(symbol)
+    if pair and pair in FX_FUTURES:
+        try:
+            got = _fx_from_futures(pair, yahoo_symbol, interval, period)
+        except Exception:
+            got = None
+        if got is not None:
+            df, note = got
+            return _to_fx_tz(df), yahoo_symbol, note
+
+    df = yf.Ticker(yahoo_symbol).history(
+        period=period, interval=interval, auto_adjust=True
+    )
+    if df is None or df.empty:
+        raise ValueError(f"No intraday data for '{yahoo_symbol}'.")
+    if pair:
+        df = _to_fx_tz(df)
+    return df, yahoo_symbol, proxy_note
 
 
 def _value_area(
@@ -168,29 +417,26 @@ def compute_volume_profile(
     full calendar trading day present in the series.
     """
     yahoo_symbol, proxy_note = resolve_symbol(symbol)
-    # v2: payload includes session VWAP + breakout/pullback signals.
-    cache_key = f"volume_profile:v2:{yahoo_symbol}:{bins}:{interval}"
+    # v3: synthetic range-volume for cash indices with Yahoo Volume=0.
+    # v4: FX pairs use CME-future volume rescaled to spot, FX session = RO day.
+    fx = is_fx_pair(symbol)
+    dp = 6 if fx else 4  # decimals kept in the payload (FX needs sub-pip)
+    cache_key = f"volume_profile:v4:{yahoo_symbol}:{bins}:{interval}"
     if not force:
         cached = disk_cache.get(cache_key)
         if isinstance(cached, dict):
             return cached
 
-    tk = yf.Ticker(yahoo_symbol)
     # 5d of 5m bars is enough to isolate the prior session.
-    df = tk.history(period="5d", interval=interval, auto_adjust=True)
-    if df is None or df.empty:
-        raise ValueError(f"No intraday data for '{yahoo_symbol}'.")
+    df, yahoo_symbol, proxy_note = fetch_intraday(symbol, interval, "5d")
 
     if "Volume" not in df.columns:
         raise ValueError(f"No Volume column for '{yahoo_symbol}'.")
 
-    # Drop zero-volume bars (common on illiquid / FX spot).
-    working = df[df["Volume"] > 0].copy()
-    if working.empty:
-        raise ValueError(
-            f"All bars have zero volume for '{yahoo_symbol}'. "
-            "Try a CME futures proxy (e.g. 6E=F, ES=F)."
-        )
+    working, synthetic_vol = ensure_positive_volume(df)
+    if synthetic_vol:
+        note = f"Synthetic range-volume (Yahoo Volume=0 for {yahoo_symbol})"
+        proxy_note = f"{proxy_note}; {note}" if proxy_note else note
 
     # Group by calendar date (exchange tz already applied by yfinance).
     working["session"] = working.index.tz_localize(None).normalize()
@@ -199,6 +445,13 @@ def compute_volume_profile(
         # Prefer the previous completed session (not today if today is partial).
         today = pd.Timestamp(date.today())
         prior_candidates = [s for s in sessions if s < today]
+        if fx and prior_candidates:
+            # Skip stub sessions (e.g. the Sunday-evening open).
+            counts = working.groupby("session").size()
+            biggest = max(int(counts[s]) for s in prior_candidates)
+            prior_candidates = [
+                s for s in prior_candidates if counts[s] >= 0.4 * biggest
+            ] or prior_candidates
         session_day = prior_candidates[-1] if prior_candidates else sessions[-2]
     else:
         session_day = sessions[-1]
@@ -221,12 +474,12 @@ def compute_volume_profile(
     inside_va = val <= current <= vah
     # Institutional heuristic: price exited VA and returned — often retests POC.
     retest_poc = inside_va and (
-        abs(current - poc) / poc < 0.003 if poc else False
+        abs(current - poc) / poc < (0.0004 if fx else 0.003) if poc else False
     )
 
     levels = [
         {
-            "price": round(float(centers[i]), 4),
+            "price": round(float(centers[i]), dp),
             "volume": int(hist[i]),
             "is_poc": bool(abs(centers[i] - poc) < 1e-9),
             "in_value_area": bool(val <= centers[i] <= vah),
@@ -246,10 +499,10 @@ def compute_volume_profile(
         candles.append(
             {
                 "time": int(ts.timestamp() + offset),
-                "open": round(float(bar["Open"]), 4),
-                "high": round(float(bar["High"]), 4),
-                "low": round(float(bar["Low"]), 4),
-                "close": round(float(bar["Close"]), 4),
+                "open": round(float(bar["Open"]), dp),
+                "high": round(float(bar["High"]), dp),
+                "low": round(float(bar["Low"]), dp),
+                "close": round(float(bar["Close"]), dp),
                 "session": str(pd.Timestamp(ts).tz_localize(None).date()),
             }
         )
@@ -260,13 +513,14 @@ def compute_volume_profile(
         "symbol": symbol.upper().strip(),
         "yahoo_symbol": yahoo_symbol,
         "proxy_note": proxy_note,
+        "volume_synthetic": synthetic_vol,
         "session_date": str(pd.Timestamp(session_day).date()),
         "interval": interval,
         "bins": n_bins,
-        "current_price": round(current, 4),
-        "poc": round(poc, 4),
-        "vah": round(vah, 4),
-        "val": round(val, 4),
+        "current_price": round(current, dp),
+        "poc": round(poc, dp),
+        "vah": round(vah, dp),
+        "val": round(val, dp),
         "inside_value_area": inside_va,
         "retest_poc_signal": retest_poc,
         "total_volume": int(volumes.sum()),

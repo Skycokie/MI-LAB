@@ -29,6 +29,7 @@ import {
 } from "@/lib/api";
 import { useLab } from "@/context/LabContext";
 import TimeframeToggle from "@/components/TimeframeToggle";
+import { fmtPriceFor, priceDecimals, priceMinMove, isFxSymbol } from "@/lib/format";
 
 type Props = {
   symbol?: string;
@@ -36,6 +37,11 @@ type Props = {
 };
 
 const VP_INTERVALS = ["1m", "2m", "5m", "15m"] as const;
+
+/** FX pairs need pip-level precision; everything else keeps 4 decimals. */
+function fxFmt(n: number, symbol: string): string {
+  return isFxSymbol(symbol) ? fmtPriceFor(n, symbol) : n.toFixed(4);
+}
 
 export default function VolumeProfileChart({
   symbol,
@@ -164,12 +170,12 @@ export default function VolumeProfileChart({
             onChange={setChartInterval}
           />
           <div className="flex flex-wrap gap-2 text-xs">
-            <Chip label="POC" value={data.poc.toFixed(4)} tone="amber" />
-            <Chip label="VAH" value={data.vah.toFixed(4)} tone="sky" />
-            <Chip label="VAL" value={data.val.toFixed(4)} tone="sky" />
+            <Chip label="POC" value={fxFmt(data.poc, data.symbol)} tone="amber" />
+            <Chip label="VAH" value={fxFmt(data.vah, data.symbol)} tone="sky" />
+            <Chip label="VAL" value={fxFmt(data.val, data.symbol)} tone="sky" />
             <Chip
               label="Last"
-              value={data.current_price.toFixed(4)}
+              value={fxFmt(data.current_price, data.symbol)}
               tone={data.inside_value_area ? "green" : "red"}
             />
             {data.retest_poc_signal && (
@@ -262,8 +268,8 @@ function PriceLevelsChart({
 
     const priceFmt = {
       type: "price" as const,
-      precision: data.current_price < 20 ? 4 : 2,
-      minMove: data.current_price < 20 ? 0.0001 : 0.01,
+      precision: priceDecimals(data.current_price, data.symbol),
+      minMove: priceMinMove(data.current_price, data.symbol),
     };
 
     const series = chart.addSeries(CandlestickSeries, {
@@ -390,7 +396,7 @@ function Histogram({ data }: { data: VolumeProfileResponse }) {
     () =>
       [...data.levels]
         .sort((a, b) => b.price - a.price)
-        .map((l) => ({ ...l, priceLabel: l.price.toFixed(4) })),
+        .map((l) => ({ ...l, priceLabel: fxFmt(l.price, data.symbol) })),
     [data],
   );
 

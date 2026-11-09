@@ -71,8 +71,8 @@ def scan_watchlist(
         cleaned.append(u)
     if not cleaned:
         raise ValueError("Provide at least one symbol.")
-    if len(cleaned) > 25:
-        raise ValueError("Max 25 symbols per scan.")
+    if len(cleaned) > 40:
+        raise ValueError("Max 40 symbols per scan.")
 
     limit_per = max(1, min(int(limit_per), 20))
     per_symbol: list[dict[str, Any]] = []

@@ -11,7 +11,7 @@ class SymbolsBody(BaseModel):
 
 
 class ScanBody(BaseModel):
-    symbols: list[str] = Field(..., min_length=1, max_length=25)
+    symbols: list[str] = Field(..., min_length=1, max_length=40)
     interval: str = Field("15m", pattern="^(5m|15m)$")
     window: int = Field(20, ge=5, le=100)
     volume_mult: float = Field(1.8, ge=0.5, le=5.0)
