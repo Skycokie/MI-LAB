@@ -110,7 +110,13 @@ export default function IctForecastPanel({
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fetchedFor, setFetchedFor] = useState<string | null>(null);
-  const requestKey = `${symbol}|${refreshKey}`;
+  // Auto-refresh la 30s: nivelurile ICT urmăresc bara live (Alpaca WebSocket).
+  const [autoKey, setAutoKey] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setAutoKey((k) => k + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const requestKey = `${symbol}|${refreshKey}|${autoKey}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -118,7 +124,7 @@ export default function IctForecastPanel({
       fetchJson<SmcResponse>(
         withRefresh(
           `/api/smc/${encodeURIComponent(symbol)}?interval=${tf}&bars=240&min_atr_mult=0.15`,
-          refreshKey,
+          refreshKey + autoKey,
         ),
       );
     Promise.all([loadOne("5m"), loadOne("15m"), loadOne("1h")])

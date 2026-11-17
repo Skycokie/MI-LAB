@@ -200,14 +200,21 @@ export default function SmcBoard({
   const [data, setData] = useState<SmcResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fetchedFor, setFetchedFor] = useState<string | null>(null);
+  // Auto-refresh la 30s ca ultima bară să rămână live (Alpaca WebSocket),
+  // fără să depindă de butonul global Refresh.
+  const [autoKey, setAutoKey] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setAutoKey((k) => k + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
-  const requestKey = `${resolvedSymbol}|${resolvedRefresh}|${interval}|${atrMult}`;
+  const requestKey = `${resolvedSymbol}|${resolvedRefresh}|${interval}|${atrMult}|${autoKey}`;
 
   useEffect(() => {
     let cancelled = false;
     const path = withRefresh(
       `/api/smc/${encodeURIComponent(resolvedSymbol)}?interval=${encodeURIComponent(interval)}&bars=240&min_atr_mult=${encodeURIComponent(atrMult)}`,
-      resolvedRefresh,
+      resolvedRefresh + autoKey,
     );
 
     fetchJson<SmcResponse>(path)
@@ -273,7 +280,7 @@ export default function SmcBoard({
     </div>
   );
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="space-y-3">
         {headerBar}
