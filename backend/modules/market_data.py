@@ -122,6 +122,37 @@ _FOREX_ALIASES: set[str] = {
     "TNX",
 }
 
+# Lab index CFDs → liquid US ETF proxies for Alpaca IEX real-time bars.
+# Prices are rescaled onto the Yahoo futures scale (NQ=F / ES=F / YM=F)
+# before they reach SMC, so levels stay comparable with the old Yahoo feed.
+ALPACA_INDEX_PROXY: dict[str, str] = {
+    "US100": "QQQ",
+    "NAS100": "QQQ",
+    "USTECH": "QQQ",
+    "NDX": "QQQ",
+    "^NDX": "QQQ",
+    "USA500": "SPY",
+    "US500": "SPY",
+    "SPX500": "SPY",
+    "SPX": "SPY",
+    "US30": "DIA",
+    "DJ30": "DIA",
+    "WALLSTREET": "DIA",
+}
+
+# Enough bars for SMC's visible window + warm-up + previous-session PDH/PDL.
+_ALPACA_INDEX_LOOKBACK: dict[str, int] = {
+    "1m": 2600,
+    "5m": 1400,
+    "15m": 900,
+    "1h": 600,
+}
+
+
+def alpaca_index_proxy(display: str) -> str | None:
+    return ALPACA_INDEX_PROXY.get(display.upper().strip())
+
+
 _ALPACA_TIMEFRAME: dict[str, str] = {
     "1m": "1Min",
     "5m": "5Min",
@@ -284,7 +315,12 @@ def _fetch_htx(display: str, interval: str, lookback: int) -> pd.DataFrame | Non
     return _normalize_ohlcv(df)
 
 
-def _fetch_alpaca(display: str, interval: str, lookback: int) -> pd.DataFrame | None:
+def _fetch_alpaca(
+    display: str,
+    interval: str,
+    lookback: int,
+    proxy_symbol: str | None = None,
+) -> pd.DataFrame | None:
     tf = _ALPACA_TIMEFRAME.get(interval)
     if not tf:
         return None
@@ -293,12 +329,13 @@ def _fetch_alpaca(display: str, interval: str, lookback: int) -> pd.DataFrame | 
     if not key or not secret:
         return None
 
-    symbol = display.upper().strip()
-    # Skip CFD / forex / crypto — Alpaca is US equities.
-    if "." in symbol or "=" in symbol or "/" in symbol:
-        return None
-    if symbol in _FOREX_ALIASES or is_fx_pair(symbol) or _resolve_htx_symbol(symbol):
-        return None
+    symbol = (proxy_symbol or display).upper().strip()
+    if proxy_symbol is None:
+        # Skip CFD / forex / crypto — Alpaca is US equities.
+        if "." in symbol or "=" in symbol or "/" in symbol:
+            return None
+        if symbol in _FOREX_ALIASES or is_fx_pair(symbol) or _resolve_htx_symbol(symbol):
+            return None
 
     start = _lookback_start(interval, lookback).strftime("%Y-%m-%dT%H:%M:%SZ")
     need_bars = min(10000, int(lookback * _FETCH_PAD) + 100)
@@ -362,6 +399,126 @@ def _fetch_alpaca(display: str, interval: str, lookback: int) -> pd.DataFrame | 
         return None
     df = pd.DataFrame(rows, index=pd.DatetimeIndex(index))
     return _normalize_ohlcv(df)
+
+
+def fetch_alpaca_index_bars(
+    display: str,
+    yahoo_symbol: str,
+    interval: str,
+) -> tuple[pd.DataFrame, dict[str, Any]] | None:
+    """
+    Real-time index bars for SMC: Alpaca IEX ETF bars (QQQ/SPY/DIA)
+    rescaled onto the Yahoo futures scale, merged over the Yahoo series.
+
+    Yahoo seeds the history (and the futures/ETF scale ratio); Alpaca
+    replaces overlapping bars and appends fresher ones, which removes
+    Yahoo's ~10-15 min delay from the live edge. Returns Yahoo-style
+    capitalized OHLCV plus metadata, or None to fall back to Yahoo.
+    """
+    proxy = alpaca_index_proxy(display)
+    if not proxy or not alpaca_configured() or interval not in _ALPACA_TIMEFRAME:
+        return None
+
+    lookback = _ALPACA_INDEX_LOOKBACK.get(interval, 1200)
+    alpaca = _fetch_alpaca(display, interval, lookback, proxy_symbol=proxy)
+    if alpaca is None or len(alpaca) < 32:
+        return None
+    yahoo = _fetch_yahoo(yahoo_symbol, interval)
+    if yahoo is None or yahoo.empty:
+        return None
+
+    # Stitch in the real-time WebSocket bars (REST Basic lags ~15 min).
+    # The stream collects 1m bars; resample them to the requested interval.
+    stream_bars = 0
+    stream_last: str | None = None
+    try:
+        from modules import alpaca_stream
+
+        live_1m = alpaca_stream.get_bars(proxy)
+    except Exception:  # noqa: BLE001 - stream is best-effort
+        live_1m = None
+    if live_1m is not None and not live_1m.empty:
+        live = live_1m.copy()
+        live.index = pd.to_datetime(live.index, utc=True)
+        if interval != "1m":
+            minutes = {"5m": 5, "15m": 15, "1h": 60}.get(interval)
+            if minutes:
+                live = (
+                    live.resample(f"{minutes}min")
+                    .agg(
+                        {
+                            "open": "first",
+                            "high": "max",
+                            "low": "min",
+                            "close": "last",
+                            "volume": "sum",
+                        }
+                    )
+                    .dropna(subset=["open", "high", "low", "close"])
+                )
+        if not live.empty:
+            stream_bars = len(live)
+            stream_last = live.index[-1].isoformat()
+            alpaca = alpaca.copy()
+            alpaca.index = pd.to_datetime(alpaca.index, utc=True)
+            alpaca.update(live[["open", "high", "low", "close", "volume"]])
+            extra = live.loc[~live.index.isin(alpaca.index)]
+            if not extra.empty:
+                alpaca = pd.concat([alpaca, extra]).sort_index()
+            alpaca = alpaca[~alpaca.index.duplicated(keep="last")]
+
+    a = alpaca.copy()
+    y = yahoo.copy()
+    a.index = pd.to_datetime(a.index, utc=True)
+    y.index = pd.to_datetime(y.index, utc=True)
+    a = a[~a.index.duplicated(keep="last")].sort_index()
+    y = y[~y.index.duplicated(keep="last")].sort_index()
+
+    common = a.index.intersection(y.index)
+    if len(common) >= 20:
+        ratios = (y.loc[common, "close"] / a.loc[common, "close"]).tail(300)
+        ratio = float(ratios.median())
+    else:
+        ratio = float(y["close"].iloc[-1] / a["close"].iloc[-1])
+    if not pd.notna(ratio) or not (0.5 < ratio < 500):
+        logger.warning("Alpaca index scale ratio out of range for %s: %s", display, ratio)
+        return None
+
+    scaled = a.copy()
+    for col in ("open", "high", "low", "close"):
+        scaled[col] = scaled[col] * ratio
+
+    merged = y.copy()
+    merged.update(scaled[["open", "high", "low", "close", "volume"]])
+    fresher = scaled.loc[~scaled.index.isin(merged.index)]
+    if not fresher.empty:
+        merged = pd.concat([merged, fresher]).sort_index()
+    merged = merged[~merged.index.duplicated(keep="last")]
+
+    out = merged.rename(
+        columns={
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close",
+            "volume": "Volume",
+        }
+    )[["Open", "High", "Low", "Close", "Volume"]]
+    meta: dict[str, Any] = {
+        "proxy_symbol": proxy,
+        "scale_ratio": round(ratio, 6),
+        "alpaca_last_bar": a.index[-1].isoformat(),
+        "yahoo_last_bar": y.index[-1].isoformat(),
+        "stream_bars": stream_bars,
+        "stream_last_bar": stream_last,
+        "live_stream": bool(stream_bars),
+        "note": (
+            f"Alpaca IEX real-time {display.upper().strip()}→{proxy}, "
+            f"rescaled ×{ratio:.4f} to {yahoo_symbol} (Yahoo = history seed"
+            f"{f'; WebSocket live: {stream_bars} bars' if stream_bars else '; WebSocket warming up'})"
+        ),
+    }
+    return out, meta
 
 
 def _fetch_yahoo(yahoo_symbol: str, interval: str) -> pd.DataFrame | None:

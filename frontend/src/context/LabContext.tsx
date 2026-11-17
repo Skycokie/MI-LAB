@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -18,12 +19,14 @@ export type LabTab =
   | "scanner"
   | "alerts"
   | "news"
+  | "basis"
+  | "smc"
   | "gex"
   | "cot"
   | "vp"
   | "fp"
   | "forecast";
-export type OpenTarget = "gex" | "vp" | "fp" | "forecast" | "news";
+export type OpenTarget = "gex" | "vp" | "fp" | "smc" | "forecast" | "news";
 
 type LabContextValue = {
   activeSymbol: string;
@@ -38,9 +41,38 @@ type LabContextValue = {
 const LabContext = createContext<LabContextValue | null>(null);
 
 export function LabProvider({ children }: { children: ReactNode }) {
-  const [activeSymbol, setActiveSymbolState] = useState("SPY");
+  const [activeSymbol, setActiveSymbolState] = useState("US100");
   const [tab, setTab] = useState<LabTab>("watch");
   const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const qSym = params.get("symbol")?.trim().toUpperCase();
+    const qTab = params.get("tab")?.trim().toLowerCase() as LabTab | undefined;
+    if (qSym) setActiveSymbolState(qSym);
+    if (
+      qTab &&
+      [
+        "watch",
+        "crypto",
+        "indices",
+        "forex",
+        "signals",
+        "scanner",
+        "alerts",
+        "news",
+        "basis",
+        "smc",
+        "gex",
+        "cot",
+        "vp",
+        "fp",
+        "forecast",
+      ].includes(qTab)
+    ) {
+      setTab(qTab);
+    }
+  }, []);
 
   const setActiveSymbol = useCallback((symbol: string) => {
     const next = symbol.trim().toUpperCase();

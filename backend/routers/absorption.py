@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from modules import absorption
+from modules import absorption, basis
 
 router = APIRouter(prefix="/api/absorption", tags=["Absorption"])
 
@@ -19,13 +19,16 @@ def get_absorption(
     order-flow candles.
     """
     try:
-        return absorption.get_absorption_signals(
+        return basis.apply(
             ticker,
-            interval=interval,
-            window=window,
-            volume_mult=volume_mult,
-            limit=limit,
-            force=refresh,
+            absorption.get_absorption_signals(
+                ticker,
+                interval=interval,
+                window=window,
+                volume_mult=volume_mult,
+                limit=limit,
+                force=refresh,
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

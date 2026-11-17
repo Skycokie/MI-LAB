@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   BarChart3,
+  Crosshair,
   Grid3x3,
   Layers,
   Newspaper,
@@ -592,6 +593,11 @@ export default function WatchlistBoard({
                         label="VP"
                         icon={Layers}
                         onClick={() => openSymbol(item.symbol, "vp")}
+                      />
+                      <OpenBtn
+                        label="SMC"
+                        icon={Crosshair}
+                        onClick={() => openSymbol(item.symbol, "smc")}
                       />
                       <OpenBtn
                         label="FP"

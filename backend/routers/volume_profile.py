@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from modules import volume_profile
+from modules import basis, volume_profile
 
 router = APIRouter(prefix="/api/volume-profile", tags=["Volume Profile"])
 
@@ -14,8 +14,11 @@ def get_volume_profile(
 ):
     """Prior-session Volume Profile (POC / VAH / VAL) plus candles for charting."""
     try:
-        return volume_profile.compute_volume_profile(
-            ticker, bins=bins, interval=interval, force=refresh
+        return basis.apply(
+            ticker,
+            volume_profile.compute_volume_profile(
+                ticker, bins=bins, interval=interval, force=refresh
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from modules import footprint
+from modules import basis, footprint
 
 router = APIRouter(prefix="/api/footprint", tags=["Footprint"])
 
@@ -17,12 +17,15 @@ def get_footprint(
     Estimated footprint candles with diagonal bid/ask imbalances.
     """
     try:
-        return footprint.build_footprint(
+        return basis.apply(
             ticker,
-            interval=interval,
-            candles=candles,
-            imbalance_ratio=imbalance_ratio,
-            force=refresh,
+            footprint.build_footprint(
+                ticker,
+                interval=interval,
+                candles=candles,
+                imbalance_ratio=imbalance_ratio,
+                force=refresh,
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

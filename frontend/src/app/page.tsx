@@ -9,10 +9,12 @@ import {
   Bookmark,
   CandlestickChart,
   CircleDollarSign,
+  Crosshair,
   Landmark,
   Layers,
   Newspaper,
   RefreshCw,
+  Scale,
   Grid3x3,
   Radar,
   Radio,
@@ -27,6 +29,8 @@ import SignalsBoard from "@/components/SignalsBoard";
 import ScannerBoard from "@/components/ScannerBoard";
 import AlertsBoard from "@/components/AlertsBoard";
 import NewsBoard from "@/components/NewsBoard";
+import BasisBoard from "@/components/BasisBoard";
+import SmcBoard from "@/components/SmcBoard";
 import ForecastBoard from "@/components/ForecastBoard";
 import { DEFAULT_CFD_WATCHLIST } from "@/lib/watchlist";
 import { LabProvider, useLab, type LabTab } from "@/context/LabContext";
@@ -82,6 +86,12 @@ const TABS: { id: LabTab; label: string; hint: string; icon: typeof Activity }[]
       icon: Newspaper,
     },
     {
+      id: "basis",
+      label: "Calibrare XTB",
+      hint: "Offset futures/spot → preț XTB · se aplică pe VP, VWAP, FP, cotații",
+      icon: Scale,
+    },
+    {
       id: "gex",
       label: "US Equities & ETFs - GEX",
       hint: "Gamma Exposure · Stocks & ETFs",
@@ -100,6 +110,12 @@ const TABS: { id: LabTab; label: string; hint: string; icon: typeof Activity }[]
       icon: Layers,
     },
     {
+      id: "smc",
+      label: "SMC / FVG (ICT)",
+      hint: "Fair Value Gaps (BISI/SIBI + CE) · Order Blocks · BOS/CHoCH · BSL/SSL · OTE",
+      icon: Crosshair,
+    },
+    {
       id: "fp",
       label: "Footprint / Order Flow",
       hint: "Estimated Bid/Ask Imbalances",
@@ -108,7 +124,7 @@ const TABS: { id: LabTab; label: string; hint: string; icon: typeof Activity }[]
     {
       id: "forecast",
       label: "Forecast",
-      hint: "Kronos-mini OHLCV prediction · experimental",
+      hint: "Kronos-mini + ICT Forecast: FVG după BOS/CHoCH · sweep EQH/EQL · BSL/SSL · macro",
       icon: Sparkles,
     },
   ];
@@ -184,10 +200,12 @@ function LabShell() {
   const showTickerBar =
     tab === "gex" ||
     tab === "vp" ||
+    tab === "smc" ||
     tab === "fp" ||
     tab === "forecast" ||
     tab === "news";
-  const showFlowPresets = tab === "vp" || tab === "fp" || tab === "forecast";
+  const showFlowPresets =
+    tab === "vp" || tab === "smc" || tab === "fp" || tab === "forecast";
   const inputValue = draft ?? (showTickerBar ? activeSymbol : "");
 
   const active = useMemo(() => TABS.find((t) => t.id === tab)!, [tab]);
@@ -464,6 +482,12 @@ function LabShell() {
           </section>
         )}
 
+        {tab === "basis" && (
+          <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-4 sm:p-5">
+            <BasisBoard />
+          </section>
+        )}
+
         {tab === "gex" && (
           <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-4 sm:p-5">
             <GexChart />
@@ -481,6 +505,12 @@ function LabShell() {
         {tab === "vp" && (
           <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-4 sm:p-5">
             <VolumeProfileChart />
+          </section>
+        )}
+
+        {tab === "smc" && (
+          <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-4 sm:p-5">
+            <SmcBoard />
           </section>
         )}
 

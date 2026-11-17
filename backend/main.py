@@ -17,6 +17,7 @@ Routers:
     /api/forecast/{ticker}       Kronos-mini OHLCV forecast (optional)
     /api/alerts                  Watchlist alerts + Alpaca Paper risk
     /api/news/{ticker}           Headlines (Financial Datasets, Alpaca fallback)
+    /api/smc/{ticker}            SMC / ICT: Fair Value Gaps, Order Blocks, BOS/CHoCH, BSL/SSL
 """
 
 from __future__ import annotations
@@ -35,16 +36,18 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from modules import alerts_engine, cvd, kronos_forecast
+from modules import alerts_engine, alpaca_stream, cvd, kronos_forecast
 from routers import (
     absorption,
     alerts,
+    basis,
     cot,
     forecast,
     footprint,
     gex,
     news,
     scanner,
+    smc,
     volume_profile,
     watchlist,
 )
@@ -80,14 +83,17 @@ async def lifespan(app: FastAPI):
     # exceed Railway / Next proxy timeouts (plain "Internal Server Error").
     kronos_forecast.warmup_in_background()
     task = asyncio.create_task(_alerts_poller())
+    stream_task = asyncio.create_task(alpaca_stream.run_forever())
     try:
         yield
     finally:
         task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        stream_task.cancel()
+        for t in (task, stream_task):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(
@@ -139,6 +145,8 @@ app.include_router(scanner.router)
 app.include_router(forecast.router)
 app.include_router(alerts.router)
 app.include_router(news.router)
+app.include_router(basis.router)
+app.include_router(smc.router)
 
 
 @app.get("/")
@@ -152,6 +160,7 @@ def root():
             "/api/volume-profile/{ticker}",
             "/api/absorption/{ticker}",
             "/api/footprint/{ticker}",
+            "/api/smc/{ticker}",
             "/api/watchlist/search",
             "/api/watchlist/quotes",
             "/api/watchlist/signals",

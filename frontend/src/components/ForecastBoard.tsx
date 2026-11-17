@@ -15,6 +15,7 @@ import {
   type ForecastResponse,
 } from "@/lib/api";
 import { useLab } from "@/context/LabContext";
+import IctForecastPanel from "@/components/IctForecastPanel";
 import TimeframeToggle from "@/components/TimeframeToggle";
 import { priceDecimals, priceMinMove } from "@/lib/format";
 
@@ -177,6 +178,11 @@ export default function ForecastBoard() {
             </code>
           )}
         </div>
+        <IctForecastPanel
+          symbol={symbol}
+          kronosInterval={interval}
+          refreshKey={refreshKey}
+        />
       </div>
     );
   }
@@ -194,6 +200,13 @@ export default function ForecastBoard() {
         Solid = history · dashed-style forecast candles = next {data.pred_len}{" "}
         × {data.interval} · model {data.model}
       </p>
+      <IctForecastPanel
+        symbol={symbol}
+        kronosInterval={interval}
+        kronosHistory={data.history}
+        kronosForecast={data.forecast}
+        refreshKey={refreshKey}
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from modules import kronos_forecast
+from modules import basis, kronos_forecast
 
 router = APIRouter(prefix="/api/forecast", tags=["Forecast"])
 
@@ -19,12 +19,15 @@ def get_forecast(
     Returns available=false when PyTorch/Kronos are not installed.
     """
     try:
-        return kronos_forecast.forecast(
+        return basis.apply(
             ticker,
-            interval=interval,
-            lookback=lookback,
-            pred_len=pred_len,
-            force=refresh,
+            kronos_forecast.forecast(
+                ticker,
+                interval=interval,
+                lookback=lookback,
+                pred_len=pred_len,
+                force=refresh,
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

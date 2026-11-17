@@ -465,6 +465,162 @@ export async function putJson<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export type BasisItem = {
+  yahoo_symbol: string;
+  label: string | null;
+  offset: number;
+  app_price: number | null;
+  xtb_price: number | null;
+  bar_time: string | null;
+  updated_at: number | null;
+  age_hours: number;
+};
+
+export type BasisPreview = {
+  symbol: string;
+  yahoo_symbol: string;
+  proxy_note: string | null;
+  source: string;
+  bar_time: string;
+  bar_tz: string;
+  app_price: number;
+  current_offset: number;
+};
+
+export type SmcFvg = {
+  id: string;
+  type: "BULLISH" | "BEARISH";
+  label: "BISI" | "SIBI" | string;
+  time: number;
+  impulse_time: number;
+  end_time: number;
+  ro_time: string;
+  mitigated_ro_time: string | null;
+  top: number;
+  bottom: number;
+  ce: number;
+  size: number;
+  atr_mult: number;
+  displaced: boolean;
+  status: "OPEN" | "PARTIAL" | "MITIGATED";
+  fill_pct: number;
+  ce_touched: boolean;
+  inverted: boolean;
+  distance: number;
+};
+
+export type SmcOrderBlock = {
+  id: string;
+  type: "BULLISH" | "BEARISH";
+  time: number;
+  end_time: number;
+  ro_time: string;
+  top: number;
+  bottom: number;
+  ce: number;
+  size: number;
+  status: "OPEN" | "TESTED" | string;
+};
+
+export type SmcStructureEvent = {
+  type: "BOS_BULL" | "BOS_BEAR" | "CHOCH_BULL" | "CHOCH_BEAR" | string;
+  direction: "BULLISH" | "BEARISH";
+  time: number;
+  swing_time: number;
+  ro_time: string;
+  price: number;
+};
+
+export type SmcSweep = {
+  type: "BULLISH_SWEEP" | "BEARISH_SWEEP" | string;
+  label: string;
+  time: number;
+  ro_time: string;
+  price: number;
+  wick: number;
+};
+
+export type SmcLiquidityLevel = {
+  side: "BSL" | "SSL";
+  kind: "EQH" | "EQL" | "SWING_HIGH" | "SWING_LOW" | "PDH" | "PDL" | string;
+  touches: number;
+  price: number;
+  time: number;
+  ro_time: string;
+  distance: number;
+};
+
+export type SmcDealingRange = {
+  range_high: number;
+  range_low: number;
+  equilibrium: number;
+  position_pct: number;
+  zone: "PREMIUM" | "DISCOUNT";
+  ote_direction: "BULLISH" | "BEARISH";
+  ote_low: number;
+  ote_high: number;
+  ote_sweet: number;
+  pdh: number | null;
+  pdl: number | null;
+};
+
+export type SmcKillzone = {
+  active: boolean;
+  id: string | null;
+  label: string;
+  window_ro: string | null;
+  silver_bullet: string | null;
+  ro_now: string;
+  ny_now: string;
+};
+
+export type SmcCandle = {
+  time: number;
+  ro_time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+};
+
+export type SmcResponse = {
+  symbol: string;
+  yahoo_symbol: string;
+  proxy_note: string | null;
+  data_source?: string;
+  feed_symbol?: string;
+  last_bar_time_ro?: string | null;
+  interval: string;
+  timezone: string;
+  current_price: number;
+  atr: number;
+  min_atr_mult: number;
+  basis_offset?: number;
+  structure_trend: "BULLISH" | "BEARISH";
+  last_structure_event: SmcStructureEvent | null;
+  killzone: SmcKillzone;
+  dealing_range: SmcDealingRange;
+  summary: {
+    open_bull_fvg_count: number;
+    open_bear_fvg_count: number;
+    mitigated_fvg_count: number;
+    active_ob_count: number;
+    nearest_bear_fvg: SmcFvg | null;
+    nearest_bull_fvg: SmcFvg | null;
+    nearest_bsl: SmcLiquidityLevel | null;
+    nearest_ssl: SmcLiquidityLevel | null;
+  };
+  fvgs: SmcFvg[];
+  order_blocks: SmcOrderBlock[];
+  structure_events: SmcStructureEvent[];
+  sweeps: SmcSweep[];
+  liquidity: {
+    bsl: SmcLiquidityLevel[];
+    ssl: SmcLiquidityLevel[];
+  };
+  candles: SmcCandle[];
+};
+
 export type NewsItem = {
   title: string;
   summary: string | null;

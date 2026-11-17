@@ -1,11 +1,13 @@
 import type { NextConfig } from "next";
 
-// Hardcoded Railway fallback — .env may not be available when next.config is evaluated.
-// Local dev: set BACKEND_URL=http://127.0.0.1:8000 in frontend/.env.local.
+// Hardcoded Railway fallback for production — .env may not be available when next.config is evaluated.
+// In local `next dev`, default to the local FastAPI backend on 127.0.0.1:8000 unless BACKEND_URL overrides it.
 const BACKEND = (
   process.env.BACKEND_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "https://backend-production-35920.up.railway.app"
+  (process.env.NODE_ENV === "development"
+    ? "http://127.0.0.1:8000"
+    : process.env.NEXT_PUBLIC_API_URL ||
+      "https://backend-production-35920.up.railway.app")
 ).replace(/\/$/, "");
 
 if (process.env.NODE_ENV === "development") {

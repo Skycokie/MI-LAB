@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from modules import quotes, symbol_search, watchlist_scan
+from modules import basis, quotes, symbol_search, watchlist_scan
 
 router = APIRouter(prefix="/api/watchlist", tags=["Watchlist"])
 
@@ -37,7 +37,8 @@ def get_search(
 def post_quotes(body: SymbolsBody):
     """Batch last price + day change for CFD / equity labels."""
     try:
-        return quotes.get_quotes(body.symbols)
+        result = quotes.get_quotes(body.symbols)
+        return {**result, "quotes": [basis.apply_quote_row(r) for r in result["quotes"]]}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -48,7 +49,7 @@ def post_quotes(body: SymbolsBody):
 def post_signals(body: ScanBody):
     """Scan watchlist for estimated absorption signals (effort vs result)."""
     try:
-        return watchlist_scan.scan_watchlist(
+        result = watchlist_scan.scan_watchlist(
             body.symbols,
             interval=body.interval,
             window=body.window,
@@ -56,6 +57,13 @@ def post_signals(body: ScanBody):
             limit_per=body.limit_per,
             force=body.refresh,
         )
+        return {
+            **result,
+            "per_symbol": [
+                basis.apply(row["symbol"], row) for row in result.get("per_symbol", [])
+            ],
+            "signals": [basis.apply(s["symbol"], s) for s in result.get("signals", [])],
+        }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
