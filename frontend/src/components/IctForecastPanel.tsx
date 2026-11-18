@@ -96,6 +96,18 @@ function nearestBelowFvg(data: SmcResponse, price: number): SmcFvg | null {
   );
 }
 
+// Distanța maximă preț → marginea FVG-ului de intrare, în multipli de ATR(5m).
+// Traiectoria proiectată dă retestului cel mult 8 bare 5m; mișcarea tipică în
+// 8 bare e ~√8 ≈ 2,8 × ATR, de unde plafonul de 3.
+const MAX_ENTRY_ATR = 3;
+
+/** Distanța de la preț până la marginea cea mai apropiată a FVG-ului (0 dacă prețul e în zonă). */
+function fvgDistance(f: SmcFvg, price: number): number {
+  if (price > f.top) return price - f.top;
+  if (price < f.bottom) return f.bottom - price;
+  return 0;
+}
+
 function preferEq(levels: SmcLiquidityLevel[], eqKind: "EQH" | "EQL"): SmcLiquidityLevel | null {
   return levels.find((l) => l.kind === eqKind) ?? null;
 }
@@ -153,10 +165,33 @@ export default function IctForecastPanel({
 
     const postBreak =
       findPostBreakFvg(confirm, "15m") ?? findPostBreakFvg(exec, "5m");
-    const bullFvgBelow =
-      postBreak?.fvg.type === "BULLISH" ? postBreak.fvg : nearestBelowFvg(confirm, price) ?? nearestBelowFvg(exec, price);
-    const bearFvgAbove =
-      postBreak?.fvg.type === "BEARISH" ? postBreak.fvg : nearestAboveFvg(confirm, price) ?? nearestAboveFvg(exec, price);
+
+    // Limită de distanță: zona de intrare trebuie să poată fi atinsă în cele
+    // ~8 bare 5m pe care traiectoria le alocă retestului. Un FVG mai departe de
+    // MAX_ENTRY_ATR × ATR(5m) nu devine zonă de intrare, oricât de „curat” ar fi.
+    const maxEntryDist = MAX_ENTRY_ATR * exec.atr;
+    const reachable = (f: SmcFvg | null | undefined): SmcFvg | null =>
+      f && fvgDistance(f, price) <= maxEntryDist ? f : null;
+    const bullCandidates = [
+      postBreak?.fvg.type === "BULLISH" ? postBreak.fvg : null,
+      nearestBelowFvg(confirm, price),
+      nearestBelowFvg(exec, price),
+    ];
+    const bearCandidates = [
+      postBreak?.fvg.type === "BEARISH" ? postBreak.fvg : null,
+      nearestAboveFvg(confirm, price),
+      nearestAboveFvg(exec, price),
+    ];
+    const bullFvgBelow = bullCandidates.map(reachable).find((f) => f != null) ?? null;
+    const bearFvgAbove = bearCandidates.map(reachable).find((f) => f != null) ?? null;
+    // Cel mai apropiat FVG respins de limită, ca să fie raportat explicit.
+    const nearestFar = (cands: Array<SmcFvg | null>): SmcFvg | null =>
+      cands
+        .filter((f): f is SmcFvg => f != null)
+        .sort((a, b) => fvgDistance(a, price) - fvgDistance(b, price))[0] ?? null;
+    const farBull = bullFvgBelow ? null : nearestFar(bullCandidates);
+    const farBear = bearFvgAbove ? null : nearestFar(bearCandidates);
+    const postBreakOutOfReach = postBreak != null && reachable(postBreak.fvg) == null;
 
     const bslLevels = confirm.liquidity.bsl.length ? confirm.liquidity.bsl : exec.liquidity.bsl;
     const sslLevels = confirm.liquidity.ssl.length ? confirm.liquidity.ssl : exec.liquidity.ssl;
@@ -272,6 +307,12 @@ export default function IctForecastPanel({
       postBreak,
       bullFvgBelow,
       bearFvgAbove,
+      maxEntryDist,
+      farBull,
+      farBear,
+      farBullDist: farBull ? fvgDistance(farBull, price) : null,
+      farBearDist: farBear ? fvgDistance(farBear, price) : null,
+      postBreakOutOfReach,
       nearestBsl,
       nearestSsl,
       eqh,
@@ -383,6 +424,14 @@ export default function IctForecastPanel({
           shortT2: model.shortT2,
           nearestBsl: model.nearestBsl,
           nearestSsl: model.nearestSsl,
+          trend15m: confirm.structure_trend,
+          trend1h: htf.structure_trend,
+          maxEntryAtr: MAX_ENTRY_ATR,
+          maxEntryDist: model.maxEntryDist,
+          farBull: model.farBull,
+          farBear: model.farBear,
+          farBullDist: model.farBullDist,
+          farBearDist: model.farBearDist,
         }}
       />
 
@@ -443,11 +492,20 @@ export default function IctForecastPanel({
                   FVG-ul după <Level>{model.postBreak.event.type.replace("_", " ")}</Level> pe {model.postBreak.tf}:
                   <Level> {fmt(model.postBreak.fvg.bottom, symbol)}–{fmt(model.postBreak.fvg.top, symbol)}</Level>,
                   CE <Level>{fmt(model.postBreak.fvg.ce, symbol)}</Level> ({model.postBreak.fvg.status}, umplut {model.postBreak.fvg.fill_pct}%).
+                  {model.postBreakOutOfReach ? (
+                    <span className="text-amber-300">
+                      {" "}E la peste {MAX_ENTRY_ATR}×ATR(5m) ({fmt(model.maxEntryDist, symbol)} pt) de preț, deci nu
+                      îl folosesc ca zonă de intrare.
+                    </span>
+                  ) : null}
                 </>
               ) : model.bullFvgBelow || model.bearFvgAbove ? (
                 <>nu am un FVG lipit de ultimul BOS/CHoCH; folosesc cel mai apropiat FVG activ de dedesubt/deasupra.</>
               ) : (
-                <>nu există FVG activ apropiat — scenariul ICT nu are zonă de intrare.</>
+                <>
+                  nu există FVG activ la cel mult {MAX_ENTRY_ATR}×ATR(5m) ({fmt(model.maxEntryDist, symbol)} pt) de
+                  preț — scenariul ICT nu are zonă de intrare.
+                </>
               )}
             </li>
             <li>
@@ -510,6 +568,11 @@ export default function IctForecastPanel({
               <td className="px-3 py-2">
                 {model.bullFvgBelow ? (
                   <>CE {fmt(model.longEntry, symbol)} · zonă {fmt(model.bullFvgBelow.bottom, symbol)}–{fmt(model.bullFvgBelow.top, symbol)}</>
+                ) : model.farBull ? (
+                  <span className="font-sans text-[11px] text-zinc-500">
+                    fără zonă în rază · cel mai apropiat BISI (CE {fmt(model.farBull.ce, symbol)}) e la{" "}
+                    {fmt(model.farBullDist, symbol)} pt, peste limita de {fmt(model.maxEntryDist, symbol)} pt
+                  </span>
                 ) : "—"}
               </td>
               <td className="px-3 py-2">{fmt(model.longStop, symbol)}</td>
@@ -528,6 +591,12 @@ export default function IctForecastPanel({
               <td className="px-3 py-2">
                 {model.bearFvgAbove ? (
                   <>CE {fmt(model.shortEntry, symbol)} · zonă {fmt(model.bearFvgAbove.bottom, symbol)}–{fmt(model.bearFvgAbove.top, symbol)}</>
+                ) : model.farBear ? (
+                  <span className="font-sans text-[11px] text-zinc-500">
+                    fără zonă în rază · cel mai apropiat SIBI (CE {fmt(model.farBear.ce, symbol)}) e la{" "}
+                    {fmt(model.farBearDist, symbol)} pt, peste limita de {fmt(model.maxEntryDist, symbol)} pt · altfel
+                    doar după BSL sweep + închidere 5m sub nivelul măturat
+                  </span>
                 ) : "doar după BSL sweep + închidere 5m sub nivelul măturat"}
               </td>
               <td className="px-3 py-2">{model.bearFvgAbove ? fmt(model.shortStop, symbol) : "peste wick-ul sweep-ului (se fixează la confirmare)"}</td>

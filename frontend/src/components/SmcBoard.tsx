@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CandlestickSeries,
   ColorType,
+  LineSeries,
   LineStyle,
   createChart,
   createSeriesMarkers,
@@ -196,6 +197,7 @@ export default function SmcBoard({
   const [showStructure, setShowStructure] = useState(true);
   const [showLiquidity, setShowLiquidity] = useState(true);
   const [showOte, setShowOte] = useState(true);
+  const [showForecast, setShowForecast] = useState(false);
 
   const [data, setData] = useState<SmcResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -237,6 +239,37 @@ export default function SmcBoard({
   }, [resolvedSymbol, resolvedRefresh, interval, atrMult, requestKey]);
 
   const loading = fetchedFor !== requestKey;
+
+  // Filtru de timeframe superior pentru Forecast ICT: planul e confirmat doar
+  // dacă structura pe 15m ȘI pe 1h are aceeași direcție. Se încarcă doar cât
+  // timp overlay-ul e pornit.
+  const [htfTrends, setHtfTrends] = useState<{
+    symbol: string;
+    m15: string | null;
+    h1: string | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!showForecast) return;
+    let cancelled = false;
+    const loadTrend = (tf: string) =>
+      fetchJson<SmcResponse>(
+        withRefresh(
+          `/api/smc/${encodeURIComponent(resolvedSymbol)}?interval=${tf}&bars=240&min_atr_mult=0.15`,
+          resolvedRefresh + autoKey,
+        ),
+      ).then((res) => res.structure_trend);
+    Promise.all([loadTrend("15m"), loadTrend("1h")])
+      .then(([m15, h1]) => {
+        if (!cancelled) setHtfTrends({ symbol: resolvedSymbol, m15, h1 });
+      })
+      .catch(() => {
+        if (!cancelled) setHtfTrends({ symbol: resolvedSymbol, m15: null, h1: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showForecast, resolvedSymbol, resolvedRefresh, autoKey]);
+  const htfForSymbol = htfTrends?.symbol === resolvedSymbol ? htfTrends : null;
 
   const activeFvgs = useMemo(
     () =>
@@ -398,6 +431,12 @@ export default function SmcBoard({
           dotColor="bg-zinc-500"
           label={`FVG Umplute (${sum.mitigated_fvg_count})`}
         />
+        <TogglePill
+          active={showForecast}
+          onClick={() => setShowForecast((v) => !v)}
+          dotColor="bg-amber-400"
+          label="Forecast ICT (intrare / stop / ieșiri)"
+        />
       </div>
 
       {/* Main SMC / FVG Candlestick Chart */}
@@ -409,6 +448,10 @@ export default function SmcBoard({
         showStructure={showStructure}
         showLiquidity={showLiquidity}
         showOte={showOte}
+        showForecast={showForecast}
+        htfLoaded={htfForSymbol != null}
+        trend15m={htfForSymbol?.m15 ?? null}
+        trend1h={htfForSymbol?.h1 ?? null}
       />
 
       <p className="text-xs text-zinc-500">
@@ -435,6 +478,54 @@ export default function SmcBoard({
   );
 }
 
+type ForecastPlan = {
+  isLong: boolean;
+  fvg: SmcFvg;
+  entry: number;
+  stop: number;
+  t1: number | null;
+  t2: number | null;
+  risk: number;
+  rr1: number | null;
+  rr2: number | null;
+};
+
+function computeForecastPlan(data: SmcResponse): ForecastPlan | null {
+  const isLong = data.structure_trend === "BULLISH";
+  const fvg = isLong ? data.summary.nearest_bull_fvg : data.summary.nearest_bear_fvg;
+  if (!fvg) return null;
+  const entry = fvg.ce;
+  const stopPad = Math.max(0.5 * data.atr, 0.2 * fvg.size);
+  const stop = isLong ? fvg.bottom - stopPad : fvg.top + stopPad;
+  const levels = (isLong ? data.liquidity.bsl : data.liquidity.ssl).filter((l) =>
+    isLong ? l.price > entry : l.price < entry,
+  );
+  const t1 = levels[0]?.price ?? null;
+  let t2 = levels[1]?.price ?? null;
+  if (t2 == null) {
+    const pd = isLong ? data.dealing_range.pdh : data.dealing_range.pdl;
+    if (pd != null && (isLong ? pd > (t1 ?? entry) : pd < (t1 ?? entry))) t2 = pd;
+  }
+  const risk = Math.abs(entry - stop);
+  return {
+    isLong,
+    fvg,
+    entry,
+    stop,
+    t1,
+    t2,
+    risk,
+    rr1: t1 != null && risk > 0 ? Math.abs(t1 - entry) / risk : null,
+    rr2: t2 != null && risk > 0 ? Math.abs(t2 - entry) / risk : null,
+  };
+}
+
+const INTERVAL_SEC: Record<string, number> = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600 };
+
+// confirmed = 15m și 1h au direcția planului · counter = cel puțin unul e contra ·
+// unknown = trendurile superioare nu au putut fi încărcate · pending = se încarcă.
+type ForecastCheck = "pending" | "confirmed" | "counter" | "unknown";
+
 function SmcPriceChart({
   data,
   showOpenFvg,
@@ -443,6 +534,10 @@ function SmcPriceChart({
   showStructure,
   showLiquidity,
   showOte,
+  showForecast,
+  htfLoaded,
+  trend15m,
+  trend1h,
 }: {
   data: SmcResponse;
   showOpenFvg: boolean;
@@ -451,8 +546,26 @@ function SmcPriceChart({
   showStructure: boolean;
   showLiquidity: boolean;
   showOte: boolean;
+  showForecast: boolean;
+  htfLoaded: boolean;
+  trend15m: string | null;
+  trend1h: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const plan = showForecast ? computeForecastPlan(data) : null;
+  // Timeframe-ul afișat își folosește propriul trend (aceleași date ca graficul).
+  const t15 = data.interval === "15m" ? data.structure_trend : trend15m;
+  const t1h = data.interval === "1h" ? data.structure_trend : trend1h;
+  const planDir = plan ? (plan.isLong ? "BULLISH" : "BEARISH") : null;
+  const fcCheck: ForecastCheck | null = !plan
+    ? null
+    : !htfLoaded
+      ? "pending"
+      : t15 == null || t1h == null
+        ? "unknown"
+        : t15 === planDir && t1h === planDir
+          ? "confirmed"
+          : "counter";
 
   useEffect(() => {
     const el = containerRef.current;
@@ -575,6 +688,81 @@ function SmcPriceChart({
       }
     }
 
+    // ── Forecast ICT overlay: intrare (FVG) / stop / ieșiri (lichiditate) ──
+    // Planul complet (zone + traiectorie) se desenează doar când 15m și 1h
+    // confirmă direcția; altfel rămâne doar zona, gri, marcată „contra trend”.
+    const fcAny = showForecast ? computeForecastPlan(data) : null;
+    const fc = fcCheck === "confirmed" ? fcAny : null;
+    const stepSec = INTERVAL_SEC[data.interval] ?? 300;
+    const futureEnd = (lastTime + 24 * stepSec) as UTCTimestamp;
+    if (fcAny && (fcCheck === "counter" || fcCheck === "unknown")) {
+      boxes.push({
+        id: "FC-ENTRY-UNCONFIRMED",
+        startTime: lastTime,
+        endTime: futureEnd,
+        extendRight: true,
+        top: fcAny.fvg.top,
+        bottom: fcAny.fvg.bottom,
+        ce: fcAny.fvg.ce,
+        fillColor: "rgba(161, 161, 170, 0.10)",
+        borderColor: "rgba(161, 161, 170, 0.7)",
+        ceColor: "rgba(161, 161, 170, 0.6)",
+        label: `${fcCheck === "counter" ? "CONTRA TREND" : "NECONFIRMAT"} · ${fcAny.isLong ? "LONG" : "SHORT"} CE ${fmt(fcAny.entry, data.symbol)}`,
+      });
+    }
+    if (fc) {
+      boxes.push({
+        id: "FC-ENTRY",
+        startTime: lastTime,
+        endTime: futureEnd,
+        extendRight: true,
+        top: fc.fvg.top,
+        bottom: fc.fvg.bottom,
+        ce: fc.fvg.ce,
+        fillColor: "rgba(245, 158, 11, 0.20)",
+        borderColor: "rgba(245, 158, 11, 0.9)",
+        ceColor: "rgba(245, 158, 11, 0.8)",
+        label: `FORECAST INTRARE ${fc.isLong ? "LONG" : "SHORT"} CE ${fmt(fc.entry, data.symbol)}`,
+      });
+      boxes.push({
+        id: "FC-STOP",
+        startTime: lastTime,
+        endTime: futureEnd,
+        extendRight: true,
+        top: fc.isLong ? fc.fvg.bottom : fc.stop,
+        bottom: fc.isLong ? fc.stop : fc.fvg.top,
+        fillColor: "rgba(239, 68, 68, 0.15)",
+        borderColor: "rgba(239, 68, 68, 0.65)",
+        label: `STOP ${fmt(fc.stop, data.symbol)}`,
+      });
+      if (fc.t1 != null) {
+        boxes.push({
+          id: "FC-TP1",
+          startTime: lastTime,
+          endTime: futureEnd,
+          extendRight: true,
+          top: fc.t1 + 0.12 * data.atr,
+          bottom: fc.t1 - 0.12 * data.atr,
+          fillColor: "rgba(56, 189, 248, 0.16)",
+          borderColor: "rgba(56, 189, 248, 0.75)",
+          label: `TP1 ${fmt(fc.t1, data.symbol)}`,
+        });
+      }
+      if (fc.t2 != null && fc.t2 !== fc.t1) {
+        boxes.push({
+          id: "FC-TP2",
+          startTime: lastTime,
+          endTime: futureEnd,
+          extendRight: true,
+          top: fc.t2 + 0.12 * data.atr,
+          bottom: fc.t2 - 0.12 * data.atr,
+          fillColor: "rgba(56, 189, 248, 0.10)",
+          borderColor: "rgba(56, 189, 248, 0.5)",
+          label: `TP2 ${fmt(fc.t2, data.symbol)}`,
+        });
+      }
+    }
+
     const primitive = new SmcZonesPrimitive(boxes);
     series.attachPrimitive(primitive);
 
@@ -671,6 +859,59 @@ function SmcPriceChart({
       }
     }
 
+    // ── Traiectorie proiectată: preț → CE intrare → TP1 → TP2 (~24 bare) ──
+    if (fc) {
+      const price = data.current_price;
+      const entryBars = Math.max(
+        3,
+        Math.min(8, Math.round(Math.abs(price - fc.entry) / (0.55 * Math.max(data.atr, 1e-9))) + 3),
+      );
+      const waypoints = [
+        { bars: 0, price },
+        { bars: entryBars, price: fc.entry },
+        { bars: 15, price: fc.t1 ?? fc.entry },
+        { bars: 24, price: fc.t2 ?? fc.t1 ?? fc.entry },
+      ];
+      const path: Array<{ time: UTCTimestamp; value: number }> = [];
+      for (let i = 0; i < waypoints.length - 1; i++) {
+        const a = waypoints[i];
+        const b = waypoints[i + 1];
+        const span = Math.max(1, b.bars - a.bars);
+        for (let s = i === 0 ? 0 : 1; s <= span; s++) {
+          const ease = 0.5 - 0.5 * Math.cos(Math.PI * (s / span));
+          path.push({
+            time: (lastTime + (a.bars + s) * stepSec) as UTCTimestamp,
+            value: a.price + (b.price - a.price) * ease,
+          });
+        }
+      }
+      const proj = chart.addSeries(LineSeries, {
+        color: "#f59e0b",
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      proj.setData(path);
+      createSeriesMarkers(proj, [
+        {
+          time: (lastTime + entryBars * stepSec) as UTCTimestamp,
+          position: fc.isLong ? ("belowBar" as const) : ("aboveBar" as const),
+          shape: fc.isLong ? ("arrowUp" as const) : ("arrowDown" as const),
+          color: "#f59e0b",
+          text: `INTRARE CE ${fmt(fc.entry, data.symbol)}`,
+        },
+      ]);
+      series.createPriceLine({
+        price: fc.stop,
+        title: `STOP ${fmt(fc.stop, data.symbol)}`,
+        color: "#ef4444",
+        lineStyle: LineStyle.Dashed,
+        lineWidth: 1,
+        axisLabelVisible: true,
+      });
+    }
+
     chart.timeScale().fitContent();
 
     return () => {
@@ -685,13 +926,66 @@ function SmcPriceChart({
     showStructure,
     showLiquidity,
     showOte,
+    showForecast,
+    fcCheck,
   ]);
 
   return (
-    <div
-      ref={containerRef}
-      className="h-[480px] w-full overflow-hidden rounded border border-zinc-800"
-    />
+    <div className="space-y-2">
+      <div
+        ref={containerRef}
+        className="h-[480px] w-full overflow-hidden rounded border border-zinc-800"
+      />
+      {showForecast &&
+        (plan && fcCheck === "pending" ? (
+          <p className="text-[11px] text-zinc-500">
+            Forecast ICT: verific trendul pe 15m și 1h înainte să afișez planul…
+          </p>
+        ) : plan && fcCheck !== "confirmed" ? (
+          <p className="text-[11px] leading-relaxed text-zinc-400">
+            <span className="rounded border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 font-semibold text-red-300">
+              {fcCheck === "counter" ? "CONTRA TREND" : "NECONFIRMAT"}
+            </span>{" "}
+            {fcCheck === "counter" ? (
+              <>
+                {plan.isLong ? "LONG" : "SHORT"} pe {data.interval} ({data.structure_trend}) nu e confirmat de
+                timeframe-urile superioare: 15m{" "}
+                <span className={t15 === planDir ? "text-emerald-400" : "text-red-400"}>{t15}</span> · 1h{" "}
+                <span className={t1h === planDir ? "text-emerald-400" : "text-red-400"}>{t1h}</span>. Planul nu
+                se afișează; rămâne doar zona, cu gri.
+              </>
+            ) : (
+              <>
+                nu am putut încărca trendul pe 15m / 1h, deci planul {plan.isLong ? "LONG" : "SHORT"} nu poate
+                fi confirmat și nu se afișează.
+              </>
+            )}{" "}
+            Niveluri orientative: CE {fmt(plan.entry, data.symbol)} în FVG {fmt(plan.fvg.bottom, data.symbol)}–
+            {fmt(plan.fvg.top, data.symbol)} · stop {fmt(plan.stop, data.symbol)}.
+          </p>
+        ) : plan ? (
+          <p className="text-[11px] leading-relaxed text-zinc-400">
+            <span className="text-amber-400">
+              Forecast ICT {plan.isLong ? "LONG" : "SHORT"} (trend {data.structure_trend} pe {data.interval},
+              confirmat de 15m și 1h):
+            </span>{" "}
+            intrare CE <span className="text-zinc-200">{fmt(plan.entry, data.symbol)}</span> în FVG{" "}
+            {fmt(plan.fvg.bottom, data.symbol)}–{fmt(plan.fvg.top, data.symbol)} · stop{" "}
+            <span className="text-red-400">{fmt(plan.stop, data.symbol)}</span> (risc{" "}
+            {fmt(plan.risk, data.symbol)} pt) ·{" "}
+            <span className="text-sky-400">
+              TP1 {fmt(plan.t1, data.symbol)}
+              {plan.rr1 != null ? ` (${plan.rr1.toFixed(1)}R)` : ""} · TP2 {fmt(plan.t2, data.symbol)}
+              {plan.rr2 != null ? ` (${plan.rr2.toFixed(1)}R)` : ""}
+            </span>{" "}
+            — traiectorie proiectată din SMC, nu semnal garantat.
+          </p>
+        ) : (
+          <p className="text-[11px] text-zinc-500">
+            Forecast ICT indisponibil pe acest timeframe: lipsește un FVG activ în direcția trendului.
+          </p>
+        ))}
+    </div>
   );
 }
 
