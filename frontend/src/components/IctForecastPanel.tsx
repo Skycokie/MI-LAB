@@ -19,6 +19,7 @@ import {
 } from "@/lib/api";
 import { useLab } from "@/context/LabContext";
 import { fmtPriceFor, isFxSymbol, priceDecimals } from "@/lib/format";
+import IctForecastChart from "@/components/IctForecastChart";
 
 type Props = {
   symbol: string;
@@ -363,6 +364,27 @@ export default function IctForecastPanel({
           <Newspaper className="h-3.5 w-3.5" /> Verifică știrile / macro
         </button>
       </div>
+
+      <IctForecastChart
+        symbol={symbol}
+        exec={exec}
+        plan={{
+          bias: model.bias,
+          score: model.score,
+          bullFvgBelow: model.bullFvgBelow,
+          bearFvgAbove: model.bearFvgAbove,
+          longEntry: model.longEntry,
+          longStop: model.longStop,
+          longT1: model.longT1,
+          longT2: model.longT2,
+          shortEntry: model.shortEntry,
+          shortStop: model.shortStop,
+          shortT1: model.shortT1,
+          shortT2: model.shortT2,
+          nearestBsl: model.nearestBsl,
+          nearestSsl: model.nearestSsl,
+        }}
+      />
 
       <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-5">
         <div className={`rounded border px-3 py-2 ${biasTone}`}>
