@@ -108,6 +108,14 @@ def status() -> dict[str, Any]:
 
 async def run_forever() -> None:
     """Reconnecting WebSocket loop; run as a background task from lifespan."""
+    # Alpaca Basic allows ONE IEX WebSocket per account. Set
+    # ALPACA_STREAM_DISABLED=1 on secondary deployments (e.g. Railway)
+    # so the primary (local) backend owns the live connection.
+    if os.getenv("ALPACA_STREAM_DISABLED", "").strip() == "1":
+        logger.info("alpaca stream disabled via ALPACA_STREAM_DISABLED=1")
+        with _lock:
+            _status["error"] = "disabled via ALPACA_STREAM_DISABLED"
+        return
     key = os.getenv("ALPACA_API_KEY_ID", "").strip()
     secret = os.getenv("ALPACA_API_SECRET_KEY", "").strip()
     if not key or not secret:
