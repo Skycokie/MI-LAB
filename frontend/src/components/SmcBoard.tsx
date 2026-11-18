@@ -254,7 +254,7 @@ export default function SmcBoard({
         </h2>
         <p className="text-xs text-zinc-500">
           {data
-            ? `${data.data_source === "alpaca_iex" ? `● LIVE Alpaca IEX (${data.feed_symbol ?? ""} → ${data.yahoo_symbol})` : data.data_source === "alpaca_iex_rest" ? `Alpaca IEX REST (${data.feed_symbol ?? ""} → ${data.yahoo_symbol}) · WebSocket în încălzire` : data.yahoo_symbol} · ${data.interval} · ore RO (Europe/Bucharest)${data.last_bar_time_ro ? ` · ultima bară ${data.last_bar_time_ro}` : ""} · ATR(14) = ${fmt(data.atr, data.symbol)}${data.basis_offset ? ` · XTB offset ${data.basis_offset > 0 ? "+" : ""}${data.basis_offset}` : ""}`
+            ? `${data.data_source === "capital_cfd" ? `● LIVE Capital CFD (${data.feed_symbol ?? ""})` : data.data_source === "alpaca_iex" ? `● LIVE Alpaca IEX (${data.feed_symbol ?? ""} → ${data.yahoo_symbol})` : data.data_source === "alpaca_iex_rest" ? `Alpaca IEX REST (${data.feed_symbol ?? ""} → ${data.yahoo_symbol}) · WebSocket în încălzire` : data.yahoo_symbol} · ${data.interval} · ore RO (Europe/Bucharest)${data.last_bar_time_ro ? ` · ultima bară ${data.last_bar_time_ro}` : ""} · ATR(14) = ${fmt(data.atr, data.symbol)}${data.basis_offset ? ` · XTB offset ${data.basis_offset > 0 ? "+" : ""}${data.basis_offset}` : ""}`
             : `FVG (BISI/SIBI + 50% CE) · Order Blocks · BOS/CHoCH · BSL/SSL · OTE`}
         </p>
       </div>

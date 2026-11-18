@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from modules import alpaca_stream, basis, smc
+from modules import alpaca_stream, basis, capital_data, smc
 
 router = APIRouter(prefix="/api/smc", tags=["SMC / ICT"])
 
@@ -9,6 +9,12 @@ router = APIRouter(prefix="/api/smc", tags=["SMC / ICT"])
 def get_stream_status():
     """Alpaca IEX WebSocket collector health (QQQ/SPY/DIA live bars)."""
     return alpaca_stream.status()
+
+
+@router.get("/capital/status")
+def get_capital_status():
+    """Capital.com CFD session health (read-only market data)."""
+    return capital_data.status()
 
 
 @router.get("/{ticker}")

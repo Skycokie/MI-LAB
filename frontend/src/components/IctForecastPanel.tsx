@@ -339,6 +339,13 @@ export default function IctForecastPanel({
             Kronos dă doar o traiectorie probabilistică. Forecast-ul ICT o filtrează prin structură:
             întâi unde e lichiditatea (EQH/EQL, BSL/SSL), apoi dacă prețul revine în FVG-ul format după
             BOS/CHoCH. Fără linii de trend și fără intrare la mijlocul range-ului.
+            {exec.data_source === "capital_cfd" && (
+              <span className="text-emerald-400">
+                {" "}
+                ● Date ICT live Capital CFD ({exec.feed_symbol}), ultima bară{" "}
+                {exec.last_bar_time_ro ?? "—"} RO.
+              </span>
+            )}
             {exec.data_source === "alpaca_iex" && (
               <span className="text-emerald-400">
                 {" "}

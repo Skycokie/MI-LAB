@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-from modules import disk_cache, market_data
+from modules import capital_data, disk_cache, market_data
 from modules.volume_profile import fetch_intraday, is_fx_pair, resolve_symbol
 
 _CACHE_TTL_SEC = 30
@@ -134,7 +134,7 @@ def compute_smc(
     fx = is_fx_pair(symbol)
     dp = 5 if fx else 2
 
-    cache_key = f"smc:v2:{yahoo_symbol}:{interval}:{bars}:{min_atr_mult:.2f}:{swing_len}"
+    cache_key = f"smc:v3:{yahoo_symbol}:{interval}:{bars}:{min_atr_mult:.2f}:{swing_len}"
     if not force:
         cached = disk_cache.get(cache_key)
         if isinstance(cached, dict):
@@ -143,8 +143,21 @@ def compute_smc(
     period = _INTERVAL_PERIOD[interval]
     data_source = "yahoo"
     feed_symbol = yahoo_symbol
+    # 1) Capital.com CFD (live in EU hours, closest to broker CFD quotes)
+    capital_pack = None
+    if capital_data.capital_epic(symbol) and capital_data.capital_configured():
+        try:
+            capital_pack = capital_data.fetch_capital_bars(symbol, interval)
+        except Exception:  # noqa: BLE001 - live feed must never break SMC
+            capital_pack = None
+    if capital_pack is not None:
+        raw_df, capital_meta = capital_pack
+        data_source = "capital_cfd"
+        feed_symbol = str(capital_meta["epic"])
+        proxy_note = str(capital_meta["note"])
+    # 2) Alpaca IEX ETF proxy (live during US cash hours)
     alpaca_pack = None
-    if market_data.alpaca_index_proxy(symbol) and market_data.alpaca_configured():
+    if capital_pack is None and market_data.alpaca_index_proxy(symbol) and market_data.alpaca_configured():
         try:
             alpaca_pack = market_data.fetch_alpaca_index_bars(symbol, yahoo_symbol, interval)
         except Exception:  # noqa: BLE001 - live feed must never break SMC
@@ -156,7 +169,8 @@ def compute_smc(
         data_source = "alpaca_iex" if alpaca_meta.get("live_stream") else "alpaca_iex_rest"
         feed_symbol = str(alpaca_meta["proxy_symbol"])
         proxy_note = str(alpaca_meta["note"])
-    else:
+    elif capital_pack is None:
+        # 3) Yahoo fallback (delayed)
         raw_df, yahoo_symbol, proxy_note = fetch_intraday(symbol, interval, period)
     df = raw_df[["Open", "High", "Low", "Close", "Volume"]].dropna(
         subset=["Open", "High", "Low", "Close"]
